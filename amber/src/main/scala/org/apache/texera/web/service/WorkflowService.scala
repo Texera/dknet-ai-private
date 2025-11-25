@@ -196,11 +196,11 @@ class WorkflowService(
     var controllerConf = ControllerConfig.default
 
     // clean up results from previous run
-    val previousExecutionId =
-      WorkflowExecutionService.getLatestExecutionId(workflowId, req.computingUnitId)
-    previousExecutionId.foreach(eid => {
-      clearExecutionResources(eid)
-    }) // TODO: change this behavior after enabling cache.
+//    val previousExecutionId =
+//      WorkflowExecutionService.getLatestExecutionId(workflowId, req.computingUnitId)
+//    previousExecutionId.foreach(eid => {
+//      clearExecutionResources(eid)
+//    }) // TODO: change this behavior after enabling cache.
 
     workflowContext.executionId = ExecutionsMetadataPersistService.insertNewExecution(
       workflowContext.workflowId,

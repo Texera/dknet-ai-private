@@ -55,6 +55,7 @@ import javax.ws.rs._
 import javax.ws.rs.core.{MediaType, Response}
 import scala.collection.mutable
 import scala.jdk.CollectionConverters._
+import scala.jdk.OptionConverters._
 
 object WorkflowExecutionsResource {
   private def context: DSLContext =
@@ -476,6 +477,39 @@ object WorkflowExecutionsResource {
   }
 
   /**
+    * Upsert cache entry for an operator port.
+    */
+  def upsertOperatorPortCache(
+      workflowId: WorkflowIdentity,
+      globalPortId: GlobalPortIdentity,
+      subdagHash: String,
+      fingerprintJson: String,
+      resultUri: java.net.URI,
+      tupleCount: Option[Long],
+      sourceExecutionId: Option[ExecutionIdentity]
+  ): Unit = {
+    val record = context.newRecord(OPERATOR_PORT_CACHE)
+    record.setWorkflowId(workflowId.id.toInt)
+    record.setGlobalPortId(globalPortId.serializeAsString)
+    record.setSubdagHash(subdagHash)
+    record.setFingerprintJson(fingerprintJson)
+    record.setResultUri(resultUri.toString)
+    tupleCount.foreach(c => record.setTupleCount(Long.box(c)))
+    sourceExecutionId.foreach(eid => record.setSourceExecutionId(Long.box(eid.id)))
+
+    context
+      .insertInto(OPERATOR_PORT_CACHE)
+      .set(record)
+      .onConflict(OPERATOR_PORT_CACHE.WORKFLOW_ID, OPERATOR_PORT_CACHE.GLOBAL_PORT_ID, OPERATOR_PORT_CACHE.SUBDAG_HASH)
+      .doUpdate()
+      .set(OPERATOR_PORT_CACHE.RESULT_URI, record.getResultUri)
+      .set(OPERATOR_PORT_CACHE.FINGERPRINT_JSON, record.getFingerprintJson)
+      .set(OPERATOR_PORT_CACHE.TUPLE_COUNT, record.getTupleCount)
+      .set(OPERATOR_PORT_CACHE.SOURCE_EXECUTION_ID, record.getSourceExecutionId)
+      .execute()
+  }
+
+  /**
     * This method is mainly used for frontend requests. Given a logicalOpId and an outputPortId of an execution,
     * this method finds the URI for a globalPortId that both: 1. matches the logicalOpId and outputPortId, and
     * 2. is an external port. Currently the lookup is O(n), where n is the number of globalPortIds for this execution.
@@ -507,6 +541,23 @@ object WorkflowExecutionsResource {
         .map(URI.create)
 
     urisOfEid.find(isMatchingExternalPortURI)
+  }
+
+  /**
+    * Lookup a result URI by executionId and physical port id.
+    */
+  def getResultUriByPhysicalPortId(
+      eid: ExecutionIdentity,
+      globalPortId: GlobalPortIdentity
+  ): Option[URI] = {
+    context
+      .select(OPERATOR_PORT_EXECUTIONS.RESULT_URI)
+      .from(OPERATOR_PORT_EXECUTIONS)
+      .where(OPERATOR_PORT_EXECUTIONS.WORKFLOW_EXECUTION_ID.eq(eid.id.toInt))
+      .and(OPERATOR_PORT_EXECUTIONS.GLOBAL_PORT_ID.eq(globalPortId.serializeAsString))
+      .fetchOptionalInto(classOf[String])
+      .toScala
+      .map(URI.create)
   }
 
   case class WorkflowExecutionEntry(

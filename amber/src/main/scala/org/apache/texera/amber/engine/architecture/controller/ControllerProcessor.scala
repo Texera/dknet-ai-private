@@ -34,7 +34,7 @@ import org.apache.texera.amber.engine.architecture.worker.WorkflowWorker.MainThr
 import org.apache.texera.amber.engine.common.ambermessage.WorkflowFIFOMessage
 
 class ControllerProcessor(
-    workflowContext: WorkflowContext,
+    val workflowContext: WorkflowContext,
     controllerConfig: ControllerConfig,
     actorId: ActorVirtualIdentity,
     outputHandler: Either[MainThreadDelegateMessage, WorkflowFIFOMessage] => Unit
