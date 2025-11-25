@@ -20,14 +20,17 @@
 package org.apache.texera.web.service
 
 import com.typesafe.scalalogging.LazyLogging
-import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
-import org.apache.texera.amber.core.workflow.WorkflowContext
-import org.apache.texera.amber.engine.architecture.controller.{ControllerConfig, Workflow}
-import org.apache.texera.amber.engine.architecture.rpc.controlcommands.EmptyRequest
-import org.apache.texera.amber.engine.architecture.rpc.controlreturns.WorkflowAggregatedState._
-import org.apache.texera.amber.engine.common.Utils
-import org.apache.texera.amber.engine.common.client.AmberClient
-import org.apache.texera.amber.engine.common.executionruntimestate.ExecutionMetadataStore
+import org.apache.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
+import org.apache.amber.core.workflow.WorkflowContext
+import org.apache.amber.engine.architecture.controller.{ControllerConfig, Workflow}
+import org.apache.amber.engine.architecture.rpc.controlcommands.EmptyRequest
+import org.apache.amber.engine.architecture.rpc.controlreturns.WorkflowAggregatedState._
+import org.apache.amber.engine.common.Utils
+import org.apache.amber.engine.common.client.AmberClient
+import org.apache.amber.engine.common.executionruntimestate.ExecutionMetadataStore
+import org.apache.amber.core.workflow.cache.FingerprintUtil
+import org.apache.amber.core.workflow.{CachedOutput, GlobalPortIdentity}
+import org.apache.amber.util.serde.GlobalPortIdentitySerde.SerdeOps
 import org.apache.texera.web.model.websocket.event.{
   TexeraWebSocketEvent,
   WorkflowErrorEvent,
@@ -103,10 +106,30 @@ class WorkflowExecutionService(
   var executionRuntimeService: ExecutionRuntimeService = _
   var executionConsoleService: ExecutionConsoleService = _
 
+  private def computeCachedOutputs(
+      physicalPlan: org.apache.amber.core.workflow.PhysicalPlan
+  ): Map[String, CachedOutput] = {
+    physicalPlan.operators
+      .flatMap(op => op.outputPorts.keys.map(pid => GlobalPortIdentity(op.id, pid)))
+      .flatMap { gpid =>
+        val fingerprint = FingerprintUtil.computeSubdagFingerprint(physicalPlan, gpid)
+        WorkflowExecutionsResource
+          .getOperatorPortCache(workflowContext.workflowId, gpid, fingerprint.subdagHash)
+          .map {
+            case (uri, tupleCount, fpJson, sourceEid) =>
+              gpid.serializeAsString -> CachedOutput(uri, fpJson, tupleCount, sourceEid)
+          }
+      }
+      .toMap
+  }
+
   def executeWorkflow(): Unit = {
     try {
       workflow = new WorkflowCompiler(workflowContext)
         .compile(request.logicalPlan)
+      val cachedOutputs = computeCachedOutputs(workflow.physicalPlan)
+      workflowContext.workflowSettings =
+        workflowContext.workflowSettings.copy(cachedOutputs = cachedOutputs)
     } catch {
       case err: Throwable =>
         errorHandler(err)

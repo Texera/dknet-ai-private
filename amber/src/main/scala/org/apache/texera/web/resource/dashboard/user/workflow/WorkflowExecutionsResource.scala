@@ -560,6 +560,37 @@ object WorkflowExecutionsResource {
       .map(URI.create)
   }
 
+  /**
+    * Lookup a cache entry by workflow, port, and subdag hash.
+    */
+  def getOperatorPortCache(
+      wid: WorkflowIdentity,
+      globalPortId: GlobalPortIdentity,
+      subdagHash: String
+  ): Option[(URI, Option[Long], String, Option[ExecutionIdentity])] = {
+    context
+      .select(
+        OPERATOR_PORT_CACHE.RESULT_URI,
+        OPERATOR_PORT_CACHE.TUPLE_COUNT,
+        OPERATOR_PORT_CACHE.FINGERPRINT_JSON,
+        OPERATOR_PORT_CACHE.SOURCE_EXECUTION_ID
+      )
+      .from(OPERATOR_PORT_CACHE)
+      .where(OPERATOR_PORT_CACHE.WORKFLOW_ID.eq(wid.id.toInt))
+      .and(OPERATOR_PORT_CACHE.GLOBAL_PORT_ID.eq(globalPortId.serializeAsString))
+      .and(OPERATOR_PORT_CACHE.SUBDAG_HASH.eq(subdagHash))
+      .fetchOptional()
+      .toScala
+      .map { record =>
+        val uri = URI.create(record.get(OPERATOR_PORT_CACHE.RESULT_URI))
+        val tupleCount = Option(record.get(OPERATOR_PORT_CACHE.TUPLE_COUNT)).map(_.longValue())
+        val fp = record.get(OPERATOR_PORT_CACHE.FINGERPRINT_JSON)
+        val sourceEid =
+          Option(record.get(OPERATOR_PORT_CACHE.SOURCE_EXECUTION_ID)).map(id => ExecutionIdentity(id.longValue()))
+        (uri, tupleCount, fp, sourceEid)
+      }
+  }
+
   case class WorkflowExecutionEntry(
       eId: Integer,
       vId: Integer,
