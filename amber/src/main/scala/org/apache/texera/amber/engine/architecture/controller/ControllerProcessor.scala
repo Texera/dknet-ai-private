@@ -47,7 +47,8 @@ class ControllerProcessor(
     () => this.workflowScheduler.getNextRegions,
     workflowExecution,
     controllerConfig,
-    asyncRPCClient
+    asyncRPCClient,
+    workflowContext.executionId
   )
 
   private val initializer = new ControllerAsyncRPCHandlerInitializer(this)

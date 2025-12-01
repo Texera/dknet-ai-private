@@ -21,14 +21,11 @@ package org.apache.texera.amber.engine.architecture.scheduling
 
 import com.twitter.util.Future
 import com.typesafe.scalalogging.LazyLogging
-import org.apache.texera.amber.core.workflow.{GlobalPortIdentity, PhysicalLink}
-import org.apache.texera.amber.engine.architecture.common.{
-  AkkaActorRefMappingService,
-  AkkaActorService
-}
-import org.apache.texera.amber.engine.architecture.controller.ControllerConfig
-import org.apache.texera.amber.engine.architecture.controller.execution.WorkflowExecution
-import org.apache.texera.amber.engine.common.rpc.AsyncRPCClient
+import org.apache.amber.core.workflow.{GlobalPortIdentity, PhysicalLink}
+import org.apache.amber.engine.architecture.common.{AkkaActorRefMappingService, AkkaActorService}
+import org.apache.amber.engine.architecture.controller.{ControllerConfig, ExecutionStateUpdate}
+import org.apache.amber.engine.architecture.controller.execution.WorkflowExecution
+import org.apache.amber.engine.common.rpc.AsyncRPCClient
 
 import scala.collection.mutable
 
@@ -36,7 +33,8 @@ class WorkflowExecutionCoordinator(
     getNextRegions: () => Set[Region],
     workflowExecution: WorkflowExecution,
     controllerConfig: ControllerConfig,
-    asyncRPCClient: AsyncRPCClient
+    asyncRPCClient: AsyncRPCClient,
+    executionId: org.apache.amber.core.virtualidentity.ExecutionIdentity
 ) extends LazyLogging {
 
   private val executedRegions: mutable.ListBuffer[Set[Region]] = mutable.ListBuffer()
@@ -79,27 +77,54 @@ class WorkflowExecutionCoordinator(
     }
 
     // All existing regions are completed. Start the next region (if any).
-    Future
-      .collect({
-        val nextRegions = getNextRegions()
-        executedRegions.append(nextRegions)
-        nextRegions
-          .map(region => {
-            workflowExecution.initRegionExecution(region)
-            regionExecutionCoordinators(region.id) = new RegionExecutionCoordinator(
-              region,
-              workflowExecution,
-              asyncRPCClient,
-              controllerConfig,
-              actorService,
-              actorRefService
+    val nextRegions = getNextRegions()
+    if (nextRegions.isEmpty) {
+      if (regionExecutionCoordinators.values.forall(_.isCompleted)) {
+        asyncRPCClient.sendToClient(
+          ExecutionStateUpdate(workflowExecution.getState)
+        )
+      }
+      Future.Unit
+    } else {
+      executedRegions.append(nextRegions)
+      val launches = nextRegions
+        .map(region => {
+          workflowExecution.initRegionExecution(region)
+          regionExecutionCoordinators(region.id) = new RegionExecutionCoordinator(
+            region,
+            workflowExecution,
+            executionId,
+            asyncRPCClient,
+            controllerConfig,
+            actorService,
+            actorRefService
+          )
+          regionExecutionCoordinators(region.id)
+        })
+        .map(_.syncStatusAndTransitionRegionExecutionPhase())
+        .toSeq
+      Future
+        .collect(launches)
+        .unit
+        .flatMap { _ =>
+          if (regionExecutionCoordinators.values.exists(!_.isCompleted)) {
+            Future.Unit
+          } else {
+            // All launched regions finished immediately (e.g., cached); proceed to next batch.
+            coordinateRegionExecutors(actorService)
+          }
+        }
+        .map { _ =>
+          if (
+            regionExecutionCoordinators.values.forall(_.isCompleted) &&
+            workflowExecution.isCompleted
+          ) {
+            asyncRPCClient.sendToClient(
+              ExecutionStateUpdate(workflowExecution.getState)
             )
-            regionExecutionCoordinators(region.id)
-          })
-          .map(_.syncStatusAndTransitionRegionExecutionPhase())
-          .toSeq
-      })
-      .unit
+          }
+        }
+    }
   }
 
   def getRegionOfLink(link: PhysicalLink): Region = {

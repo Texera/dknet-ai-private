@@ -32,7 +32,8 @@ sealed trait PortConfig {
 }
 
 /** An output port requires exactly one materialization URI. */
-final case class OutputPortConfig(storageURI: URI) extends PortConfig {
+final case class OutputPortConfig(storageURI: URI, cachedTupleCount: Option[Long] = None)
+    extends PortConfig {
   override val storageURIs: List[URI] = List(storageURI)
 }
 

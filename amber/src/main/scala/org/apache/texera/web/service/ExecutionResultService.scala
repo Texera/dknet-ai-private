@@ -333,7 +333,7 @@ class ExecutionResultService(
             evt.state == COMPLETED || evt.state == FAILED || evt.state == KILLED || evt.state == TERMINATED
           ) {
             logger.info("Workflow execution terminated. Stop update results.")
-            if (resultUpdateCancellable.cancel() || resultUpdateCancellable.isCancelled) {
+            if (resultUpdateCancellable == null|| resultUpdateCancellable.cancel() || resultUpdateCancellable.isCancelled) {
               // immediately perform final update
               onResultUpdate(executionId, physicalPlan)
             }

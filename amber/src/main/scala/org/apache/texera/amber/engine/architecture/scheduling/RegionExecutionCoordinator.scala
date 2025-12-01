@@ -21,40 +21,22 @@ package org.apache.texera.amber.engine.architecture.scheduling
 
 import org.apache.pekko.pattern.gracefulStop
 import com.twitter.util.{Future, Return, Throw}
-import org.apache.texera.amber.core.storage.DocumentFactory
-import org.apache.texera.amber.core.storage.VFSURIFactory.decodeURI
-import org.apache.texera.amber.core.virtualidentity.ActorVirtualIdentity
-import org.apache.texera.amber.core.workflow.{GlobalPortIdentity, PhysicalLink, PhysicalOp}
-import org.apache.texera.amber.engine.architecture.common.{
-  AkkaActorRefMappingService,
-  AkkaActorService,
-  ExecutorDeployment
-}
-import org.apache.texera.amber.engine.architecture.controller.execution.{
-  OperatorExecution,
-  RegionExecution,
-  WorkflowExecution
-}
-import org.apache.texera.amber.engine.architecture.controller.{
-  ControllerConfig,
-  ExecutionStatsUpdate,
-  RuntimeStatisticsPersist,
-  WorkerAssignmentUpdate
-}
-import org.apache.texera.amber.engine.architecture.rpc.controlcommands._
-import org.apache.texera.amber.engine.architecture.rpc.controlreturns.EmptyReturn
-import org.apache.texera.amber.engine.architecture.scheduling.config.{
-  InputPortConfig,
-  OperatorConfig,
-  OutputPortConfig,
-  ResourceConfig
-}
-import org.apache.texera.amber.engine.architecture.sendsemantics.partitionings.Partitioning
-import org.apache.texera.amber.engine.architecture.worker.statistics.WorkerState
-import org.apache.texera.amber.engine.common.AmberLogging
-import org.apache.texera.amber.engine.common.FutureBijection._
-import org.apache.texera.amber.engine.common.rpc.AsyncRPCClient
-import org.apache.texera.amber.engine.common.virtualidentity.util.CONTROLLER
+import org.apache.amber.core.storage.DocumentFactory
+import org.apache.amber.core.storage.VFSURIFactory.decodeURI
+import org.apache.amber.core.virtualidentity.ActorVirtualIdentity
+import org.apache.amber.core.workflow.{GlobalPortIdentity, PhysicalLink, PhysicalOp}
+import org.apache.amber.engine.architecture.common.{AkkaActorRefMappingService, AkkaActorService, ExecutorDeployment}
+import org.apache.amber.engine.architecture.controller.execution.{OperatorExecution, RegionExecution, WorkflowExecution}
+import org.apache.amber.engine.architecture.controller.{ControllerConfig, ExecutionStateUpdate, ExecutionStatsUpdate, WorkerAssignmentUpdate}
+import org.apache.amber.engine.architecture.rpc.controlcommands._
+import org.apache.amber.engine.architecture.rpc.controlreturns.EmptyReturn
+import org.apache.amber.engine.architecture.scheduling.config.{InputPortConfig, OperatorConfig, OutputPortConfig, ResourceConfig, WorkerConfig}
+import org.apache.amber.engine.architecture.sendsemantics.partitionings.Partitioning
+import org.apache.amber.engine.architecture.worker.statistics.{PortTupleMetricsMapping, TupleMetrics, WorkerState, WorkerStatistics}
+import org.apache.amber.engine.common.AmberLogging
+import org.apache.amber.engine.common.FutureBijection._
+import org.apache.amber.engine.common.rpc.AsyncRPCClient
+import org.apache.amber.engine.common.virtualidentity.util.CONTROLLER
 import org.apache.texera.web.SessionState
 import org.apache.texera.web.model.websocket.event.RegionStateEvent
 import org.apache.texera.web.resource.dashboard.user.workflow.WorkflowExecutionsResource
@@ -92,13 +74,12 @@ import scala.concurrent.duration.Duration
 class RegionExecutionCoordinator(
     region: Region,
     workflowExecution: WorkflowExecution,
+    executionId: org.apache.amber.core.virtualidentity.ExecutionIdentity,
     asyncRPCClient: AsyncRPCClient,
     controllerConfig: ControllerConfig,
     actorService: AkkaActorService,
     actorRefService: AkkaActorRefMappingService
 ) extends AmberLogging {
-
-  initRegionExecution()
 
   private sealed trait RegionExecutionPhase
   private case object Unexecuted extends RegionExecutionPhase
@@ -109,6 +90,63 @@ class RegionExecutionCoordinator(
   private val currentPhaseRef: AtomicReference[RegionExecutionPhase] = new AtomicReference(
     Unexecuted
   )
+
+  if (region.cached) {
+    completeCachedRegion()
+  } else {
+    initRegionExecution()
+  }
+
+  private def completeCachedRegion(): Unit = {
+    val regionExecution = workflowExecution.getRegionExecution(region.id)
+    val resourceConfig = region.resourceConfig.getOrElse(ResourceConfig())
+    region.getOperators.foreach { op =>
+      val opExecution = regionExecution.initOperatorExecution(op.id)
+      val workerConfigs = resourceConfig.operatorConfigs
+        .get(op.id)
+        .map(_.workerConfigs)
+        .getOrElse(WorkerConfig.generateWorkerConfigs(op))
+      workerConfigs.foreach { workerCfg =>
+        val workerExecution = opExecution.initWorkerExecution(workerCfg.workerId)
+        op.inputPorts.keys.foreach(pid => workerExecution.getInputPortExecution(pid).setCompleted())
+        op.outputPorts.keys.foreach(pid => workerExecution.getOutputPortExecution(pid).setCompleted())
+        val outputMetrics = op.outputPorts.keys.map { pid =>
+          val count = resourceConfig.portConfigs.collectFirst {
+            case (gpid, cfg: OutputPortConfig) if gpid == GlobalPortIdentity(op.id, pid) =>
+              cfg.cachedTupleCount.getOrElse(0L)
+          }.getOrElse(0L)
+          PortTupleMetricsMapping(pid, TupleMetrics(count, 0L))
+        }.toSeq
+        val inputMetrics = op.inputPorts.keys
+          .map(pid => PortTupleMetricsMapping(pid, TupleMetrics(0L, 0L)))
+          .toSeq
+        val stats = WorkerStatistics(
+          inputMetrics,
+          outputMetrics,
+          dataProcessingTime = 0L,
+          controlProcessingTime = 0L,
+          idleTime = 0L
+        )
+        workerExecution.update(System.nanoTime(), WorkerState.COMPLETED, stats)
+      }
+    }
+    recordCachedOutputPortResults(resourceConfig)
+    asyncRPCClient.sendToClient(
+      ExecutionStatsUpdate(workflowExecution.getAllRegionExecutionsStats)
+    )
+    setPhase(Completed)
+  }
+
+  private def recordCachedOutputPortResults(resourceConfig: ResourceConfig): Unit = {
+    resourceConfig.portConfigs.collect { case (gpid, cfg: OutputPortConfig) =>
+      val storageUri = cfg.storageURI
+      WorkflowExecutionsResource.insertOperatorPortResultUri(
+        eid = executionId,
+        globalPortId = gpid,
+        uri = storageUri
+      )
+    }
+  }
 
   /**
     * Sync the status of `RegionExecution` and transition this coordinator's phase to `Completed` only when the
@@ -226,6 +264,10 @@ class RegionExecutionCoordinator(
     }
 
   private def executeDependeePortPhase(): Future[Unit] = {
+    if (region.cached) {
+      // Cached region short-circuits all execution.
+      return Future.Unit
+    }
     setPhase(ExecutingDependeePortsPhase)
     if (!region.getOperators.exists(_.dependeeInputs.nonEmpty)) {
       // Skip to the next phase when there are no dependee input ports
@@ -352,6 +394,9 @@ class RegionExecutionCoordinator(
       operators: Set[PhysicalOp],
       resourceConfig: ResourceConfig
   ): Future[Seq[EmptyReturn]] = {
+    if (region.cached) {
+      return Future.value(Seq.empty)
+    }
     Future
       .collect(
         operators
@@ -460,6 +505,9 @@ class RegionExecutionCoordinator(
   }
 
   private def connectChannels(links: Set[PhysicalLink]): Future[Seq[EmptyReturn]] = {
+    if (region.cached) {
+      return Future.value(Seq.empty)
+    }
     Future.collect(
       links.map { link: PhysicalLink =>
         asyncRPCClient.controllerInterface.linkWorkers(
@@ -471,6 +519,9 @@ class RegionExecutionCoordinator(
   }
 
   private def openOperators(operators: Set[PhysicalOp]): Future[Seq[EmptyReturn]] = {
+    if (region.cached) {
+      return Future.value(Seq.empty)
+    }
     Future
       .collect(
         operators
@@ -490,9 +541,20 @@ class RegionExecutionCoordinator(
       region: Region,
       isDependeePhase: Boolean
   ): Future[Seq[Unit]] = {
+<<<<<<< HEAD:amber/src/main/scala/org/apache/texera/amber/engine/architecture/scheduling/RegionExecutionCoordinator.scala
     val stats = workflowExecution.getAllRegionExecutionsStats
     asyncRPCClient.sendToClient(ExecutionStatsUpdate(stats))
     asyncRPCClient.sendToClient(RuntimeStatisticsPersist(stats))
+=======
+    if (region.cached) {
+      return Future.value(Seq.empty)
+    }
+    asyncRPCClient.sendToClient(
+      ExecutionStatsUpdate(
+        workflowExecution.getAllRegionExecutionsStats
+      )
+    )
+>>>>>>> 241b98c20 (feat(cache): reuse cached URIs in scheduler and short-circuit cached regions during execution):amber/src/main/scala/org/apache/amber/engine/architecture/scheduling/RegionExecutionCoordinator.scala
     val allStarterOperators = region.getStarterOperators
     val starterOpsForThisPhase =
       if (isDependeePhase) allStarterOperators.filter(_.dependeeInputs.nonEmpty)

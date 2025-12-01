@@ -179,7 +179,7 @@ class WorkflowExecutionService(
       })
       .onSuccess(resp =>
         executionStateStore.metadataStore.updateState(metadataStore =>
-          if (metadataStore.state != FAILED) {
+          if (metadataStore.state != FAILED && metadataStore.state != COMPLETED) {
             updateWorkflowState(resp.workflowState, metadataStore)
           } else {
             metadataStore
