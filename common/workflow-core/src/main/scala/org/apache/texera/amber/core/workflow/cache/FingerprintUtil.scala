@@ -17,14 +17,13 @@
  * under the License.
  */
 
-package org.apache.amber.core.workflow.cache
+package org.apache.texera.amber.core.workflow.cache
 
 import com.fasterxml.jackson.annotation.JsonInclude
-import com.fasterxml.jackson.databind.SerializationFeature
+import com.fasterxml.jackson.databind.{ObjectMapper, SerializationFeature}
 import com.fasterxml.jackson.databind.node.ObjectNode
-import com.fasterxml.jackson.databind.ObjectMapper
-import org.apache.amber.core.executor.OpExecInitInfo
-import org.apache.amber.core.workflow.{GlobalPortIdentity, PhysicalLink, PhysicalOp, PhysicalPlan}
+import org.apache.texera.amber.core.executor.OpExecInitInfo
+import org.apache.texera.amber.core.workflow.{GlobalPortIdentity, PhysicalLink, PhysicalOp, PhysicalPlan}
 
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest

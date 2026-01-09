@@ -74,7 +74,7 @@ import scala.concurrent.duration.Duration
 class RegionExecutionCoordinator(
     region: Region,
     workflowExecution: WorkflowExecution,
-    executionId: org.apache.amber.core.virtualidentity.ExecutionIdentity,
+    executionId: org.apache.texera.amber.core.virtualidentity.ExecutionIdentity,
     asyncRPCClient: AsyncRPCClient,
     controllerConfig: ControllerConfig,
     actorService: AkkaActorService,

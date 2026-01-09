@@ -34,7 +34,7 @@ class WorkflowExecutionCoordinator(
     workflowExecution: WorkflowExecution,
     controllerConfig: ControllerConfig,
     asyncRPCClient: AsyncRPCClient,
-    executionId: org.apache.amber.core.virtualidentity.ExecutionIdentity
+    executionId: org.apache.texera.amber.core.virtualidentity.ExecutionIdentity
 ) extends LazyLogging {
 
   private val executedRegions: mutable.ListBuffer[Set[Region]] = mutable.ListBuffer()

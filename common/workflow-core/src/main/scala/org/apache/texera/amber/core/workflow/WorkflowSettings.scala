@@ -19,9 +19,7 @@
 
 package org.apache.texera.amber.core.workflow
 
-import org.apache.texera.config.GuiConfig
-
-import org.apache.amber.core.virtualidentity.ExecutionIdentity
+import org.apache.texera.amber.core.virtualidentity.ExecutionIdentity
 
 import java.net.URI
 
