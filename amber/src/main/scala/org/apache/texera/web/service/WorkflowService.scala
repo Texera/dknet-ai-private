@@ -115,7 +115,7 @@ class WorkflowService(
       WorkflowExecutionService
         .getLatestExecutionId(workflowId, computingUnitId)
         .foreach(eid => {
-          clearExecutionResources(eid)
+//          clearExecutionResources(eid)
         })
       WorkflowService.workflowServiceMapping.remove(mkWorkflowStateId(workflowId))
       if (executionService.getValue != null) {
