@@ -557,7 +557,7 @@ class CostBasedScheduleGenerator(
   def topDownSearch(
       globalSearch: Boolean = false,
       oChains: Boolean = false,
-      oCleanEdges: Boolean = true
+      oCleanEdges: Boolean = false
   ): SearchResult = {
     val startTime = System.nanoTime()
     // Starting from a state where all non-blocking edges are materialized
