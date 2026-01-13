@@ -40,6 +40,22 @@ case class OperatorExecution() {
 
   private val workerExecutions =
     new util.concurrent.ConcurrentHashMap[ActorVirtualIdentity, WorkerExecution]()
+  // Cached metrics for ToSkip regions; when set, operator stats/state are derived from this only.
+  private var cachedMetrics: Option[OperatorMetrics] = None
+
+  /**
+    * Sets cached operator metrics for a ToSkip region and bypasses worker-based aggregation.
+    */
+  def setCachedMetrics(metrics: OperatorMetrics): Unit = {
+    cachedMetrics = Some(metrics)
+  }
+
+  /**
+    * Clears cached operator metrics so the operator can report live worker stats again.
+    */
+  def clearCachedMetrics(): Unit = {
+    cachedMetrics = None
+  }
 
   /**
     * Initializes a `WorkerExecution` for the specified workerId and adds it to the workerExecutions map.
@@ -70,17 +86,24 @@ case class OperatorExecution() {
     */
   def getWorkerIds: Set[ActorVirtualIdentity] = workerExecutions.keys.asScala.toSet
 
+  /**
+    * Returns the aggregated operator state from worker executions, or the cached state when present.
+    */
   def getState: WorkflowAggregatedState = {
-    val workerStates = workerExecutions.values.asScala.map(_.getState)
-    aggregateStates(
-      workerStates,
-      WorkerState.COMPLETED,
-      WorkerState.TERMINATED,
-      WorkerState.RUNNING,
-      WorkerState.UNINITIALIZED,
-      WorkerState.PAUSED,
-      WorkerState.READY
-    )
+    cachedMetrics
+      .map(_.operatorState)
+      .getOrElse {
+        val workerStates = workerExecutions.values.asScala.map(_.getState)
+        aggregateStates(
+          workerStates,
+          WorkerState.COMPLETED,
+          WorkerState.TERMINATED,
+          WorkerState.RUNNING,
+          WorkerState.UNINITIALIZED,
+          WorkerState.PAUSED,
+          WorkerState.READY
+        )
+      }
   }
 
   private[this] def computeOperatorPortStats(
@@ -89,36 +112,55 @@ case class OperatorExecution() {
     ExecutionUtils.aggregatePortMetrics(workerPortStats)
   }
 
+  /**
+    * Returns operator metrics aggregated from worker executions, or cached metrics when set.
+    */
   def getStats: OperatorMetrics = {
-    val workerRawStats = workerExecutions.values.asScala.map(_.getStats)
-    val inputMetrics = workerRawStats.flatMap(_.inputTupleMetrics)
-    val outputMetrics = workerRawStats.flatMap(_.outputTupleMetrics)
-    OperatorMetrics(
-      getState,
-      OperatorStatistics(
-        inputMetrics = computeOperatorPortStats(inputMetrics),
-        outputMetrics = computeOperatorPortStats(outputMetrics),
-        getWorkerIds.size,
-        dataProcessingTime = workerRawStats.map(_.dataProcessingTime).sum,
-        controlProcessingTime = workerRawStats.map(_.controlProcessingTime).sum,
-        idleTime = workerRawStats.map(_.idleTime).sum
+    cachedMetrics.getOrElse {
+      val workerRawStats = workerExecutions.values.asScala.map(_.getStats)
+      val inputMetrics = workerRawStats.flatMap(_.inputTupleMetrics)
+      val outputMetrics = workerRawStats.flatMap(_.outputTupleMetrics)
+      OperatorMetrics(
+        getState,
+        OperatorStatistics(
+          inputMetrics = computeOperatorPortStats(inputMetrics),
+          outputMetrics = computeOperatorPortStats(outputMetrics),
+          getWorkerIds.size,
+          dataProcessingTime = workerRawStats.map(_.dataProcessingTime).sum,
+          controlProcessingTime = workerRawStats.map(_.controlProcessingTime).sum,
+          idleTime = workerRawStats.map(_.idleTime).sum
+        )
       )
-    )
+    }
   }
 
+  /**
+    * Returns true when all worker input ports are completed, or always true for cached operators.
+    */
   def isInputPortCompleted(portId: PortIdentity): Boolean = {
-    workerExecutions
-      .values()
-      .asScala
-      .map(workerExecution => workerExecution.getInputPortExecution(portId))
-      .forall(_.completed)
+    if (cachedMetrics.isDefined) {
+      true
+    } else {
+      workerExecutions
+        .values()
+        .asScala
+        .map(workerExecution => workerExecution.getInputPortExecution(portId))
+        .forall(_.completed)
+    }
   }
 
+  /**
+    * Returns true when all worker output ports are completed, or always true for cached operators.
+    */
   def isOutputPortCompleted(portId: PortIdentity): Boolean = {
-    workerExecutions
-      .values()
-      .asScala
-      .map(workerExecution => workerExecution.getOutputPortExecution(portId))
-      .forall(_.completed)
+    if (cachedMetrics.isDefined) {
+      true
+    } else {
+      workerExecutions
+        .values()
+        .asScala
+        .map(workerExecution => workerExecution.getOutputPortExecution(portId))
+        .forall(_.completed)
+    }
   }
 }

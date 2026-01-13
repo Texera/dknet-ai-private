@@ -35,10 +35,10 @@ A region is either fully cached (ToSkip) or fully executed (ToExecute) — no pa
 - Cost model (compare full region costs)
 
 ### 4. Shallow State Hierarchy for Cached Regions
-ToSkip regions create lightweight state structures (Workflow → Region → Operator/Link) without Worker/Channel states. This is consistent with `numWorkers=0` and avoids synthetic worker lifecycle management.
+ToSkip regions create lightweight state structures (Workflow → Region → Operator/Link) and store cached metrics at the operator level. No Worker/Channel states are created, so `numWorkers=0` and no worker assignments are emitted.
 
 ### 5. Stats Emission via Direct Client Updates
-Cached regions emit synthetic `ExecutionStatsUpdate` messages directly via `asyncRPCClient.sendToClient()`. This reuses existing stats infrastructure without special-casing the frontend.
+Cached regions emit synthetic `ExecutionStatsUpdate` messages directly via `asyncRPCClient.sendToClient()`, with cached operator metrics (`numWorkers=0`). This reuses existing stats infrastructure without special-casing the frontend.
 
 ### 6. No Explicit Cache Flag in Metrics
 Cached execution is inferred from `numWorkers=0` + instant completion, rather than adding a `from_cache` flag to protobuf messages. This minimizes protocol changes.
@@ -112,8 +112,9 @@ Entry point: `RegionExecutionCoordinator` constructor branches on `region.cached
 1. **Skip operator execution**: Call `completeCachedRegion()` immediately
 2. **State hierarchy** (shallow):
    - Create: Workflow → Region → Operator/Link states
+   - Record cached operator metrics (numWorkers=0)
    - Skip: Worker/Channel states (not needed)
-3. **Mark ports completed**: Set port status to COMPLETED with cached URI
+3. **Mark ports completed**: Treat cached operators as completed and record cached URIs
 4. **Emit synthetic stats** via `asyncRPCClient.sendToClient(ExecutionStatsUpdate(...))`:
    - `numWorkers = 0`
    - `dataProcessingTime = 0`, `controlProcessingTime = 0`, `idleTime = 0`
@@ -288,7 +289,7 @@ ExecutionCacheService ────→ upsertCachedOutput()     OperatorPortCache
 - **Cache persistence**: `PortCompletedHandler` emits `PortMaterialized` event → `ExecutionCacheService` → `OperatorPortCacheService.upsertCachedOutput()` → `OperatorPortCacheDao.upsert()` (includes fingerprint, URI, tuple count)
 - **Scheduler integration**: `CostBasedScheduleGenerator` marks regions cached when all required outputs have hits, reuses cached URIs in port configs
 - **Runtime execution**: `RegionExecutionCoordinator` branches on `region.cached` flag:
-  - ToSkip regions: `completeCachedRegion()` creates shallow state hierarchy, emits synthetic stats (numWorkers=0, processingTime=0), propagates cached URIs downstream
+  - ToSkip regions: `completeCachedRegion()` records cached operator metrics (numWorkers=0, processingTime=0) without creating workers, propagates cached URIs downstream
   - ToExecute regions: normal execution path
 - **Stats emission**: Cached regions emit `ExecutionStatsUpdate` via direct client updates, maintaining consistency with normal execution lifecycle
 
