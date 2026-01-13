@@ -28,14 +28,9 @@ import org.apache.texera.amber.engine.architecture.rpc.controlreturns.WorkflowAg
 import org.apache.texera.amber.engine.common.Utils
 import org.apache.texera.amber.engine.common.client.AmberClient
 import org.apache.texera.amber.engine.common.executionruntimestate.ExecutionMetadataStore
-import org.apache.texera.amber.core.workflow.cache.FingerprintUtil
 import org.apache.texera.amber.core.workflow.{CachedOutput, GlobalPortIdentity}
 import org.apache.texera.amber.util.serde.GlobalPortIdentitySerde.SerdeOps
-import org.apache.texera.web.model.websocket.event.{
-  TexeraWebSocketEvent,
-  WorkflowErrorEvent,
-  WorkflowStateEvent
-}
+import org.apache.texera.web.model.websocket.event.{TexeraWebSocketEvent, WorkflowErrorEvent, WorkflowStateEvent}
 import org.apache.texera.web.model.websocket.request.WorkflowExecuteRequest
 import org.apache.texera.web.resource.dashboard.user.workflow.WorkflowExecutionsResource
 import org.apache.texera.web.storage.ExecutionStateStore
@@ -61,6 +56,7 @@ class WorkflowExecutionService(
     controllerConfig: ControllerConfig,
     val workflowContext: WorkflowContext,
     resultService: ExecutionResultService,
+    cacheService: OperatorPortCacheService,
     request: WorkflowExecuteRequest,
     val executionStateStore: ExecutionStateStore,
     errorHandler: Throwable => Unit,
@@ -105,22 +101,14 @@ class WorkflowExecutionService(
   var executionStatsService: ExecutionStatsService = _
   var executionRuntimeService: ExecutionRuntimeService = _
   var executionConsoleService: ExecutionConsoleService = _
+  var executionCacheService: ExecutionCacheService = _
 
   private def computeCachedOutputs(
       physicalPlan: org.apache.texera.amber.core.workflow.PhysicalPlan
   ): Map[String, CachedOutput] = {
-    physicalPlan.operators
-      .flatMap(op => op.outputPorts.keys.map(pid => GlobalPortIdentity(op.id, pid)))
-      .flatMap { gpid =>
-        val fingerprint = FingerprintUtil.computeSubdagFingerprint(physicalPlan, gpid)
-        WorkflowExecutionsResource
-          .getOperatorPortCache(workflowContext.workflowId, gpid, fingerprint.subdagHash)
-          .map {
-            case (uri, tupleCount, fpJson, sourceEid) =>
-              gpid.serializeAsString -> CachedOutput(uri, fpJson, tupleCount, sourceEid)
-          }
-      }
-      .toMap
+    cacheService
+      .lookupCachedOutputs(workflowContext.workflowId, physicalPlan)
+      .map { case (gpid, cached) => gpid.serializeAsString -> cached }
   }
 
   def executeWorkflow(): Unit = {
@@ -144,6 +132,8 @@ class WorkflowExecutionService(
     executionReconfigurationService =
       new ExecutionReconfigurationService(client, executionStateStore, workflow)
     executionStatsService = new ExecutionStatsService(client, executionStateStore, workflow.context)
+    executionCacheService =
+      new ExecutionCacheService(client, cacheService, workflow.context, workflow.physicalPlan)
     executionRuntimeService = new ExecutionRuntimeService(
       client,
       executionStateStore,
@@ -196,6 +186,7 @@ class WorkflowExecutionService(
       executionRuntimeService.unsubscribeAll()
       executionConsoleService.unsubscribeAll()
       executionStatsService.unsubscribeAll()
+      executionCacheService.unsubscribeAll()
       executionReconfigurationService.unsubscribeAll()
     }
 

@@ -107,6 +107,12 @@ class WorkflowService(
 
   val resultService: ExecutionResultService =
     new ExecutionResultService(workflowId, computingUnitId, stateStore)
+  val cacheService: OperatorPortCacheService = {
+    val dao = new org.apache.texera.web.dao.OperatorPortCacheDao(
+      org.apache.texera.dao.SqlServer.getInstance()
+    )
+    new OperatorPortCacheService(dao)
+  }
   val lifeCycleManager: WorkflowLifecycleManager = new WorkflowLifecycleManager(
     s"workflowId=$workflowId",
     cleanUpTimeout,
@@ -275,6 +281,7 @@ class WorkflowService(
         controllerConf,
         workflowContext,
         resultService,
+        cacheService,
         req,
         executionStateStore,
         errorHandler,

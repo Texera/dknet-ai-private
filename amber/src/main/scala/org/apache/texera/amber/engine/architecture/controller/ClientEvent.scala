@@ -49,3 +49,9 @@ case class UpdateExecutorCompleted(id: ActorVirtualIdentity) extends ClientEvent
 final case class ReplayStatusUpdate(id: ActorVirtualIdentity, status: Boolean) extends ClientEvent
 
 final case class WorkflowRecoveryStatus(isRecovering: Boolean) extends ClientEvent
+
+case class PortMaterialized(
+    portId: org.apache.texera.amber.core.workflow.GlobalPortIdentity,
+    resultUri: java.net.URI,
+    tupleCount: Option[Long]
+) extends ClientEvent

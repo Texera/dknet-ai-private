@@ -51,9 +51,10 @@ V1 assumes unlimited storage. Eviction, TTL, and garbage collection are research
   - `fingerprint_json`: canonical JSON of the upstream sub‑DAG.
   - `subdag_hash`: SHA-256 of `fingerprint_json`.
   - `result_uri`: materialization URI.
-  - `tuple_count` (optional), `source_execution_id` (optional), timestamps.
+  - `tuple_count` (optional), `source_execution_id` (optional).
+  - `updated_at`: TIMESTAMPTZ managed by database (DEFAULT now()).
 - `global_port_id` uses existing `GlobalPortIdentity` serialization.
-- Status: schema + migration added (`sql/texera_ddl.sql`, `sql/updates/16.sql`).
+- Status: schema + migration added (`sql/updates/cache.sql`).
 
 ## Fingerprint
 - Utility: `FingerprintUtil.computeSubdagFingerprint(physicalPlan, globalPortId) -> (fingerprintJson, subdagHash)`.
@@ -122,18 +123,24 @@ Entry point: `RegionExecutionCoordinator` constructor branches on `region.cached
 7. **Set phase to Completed**: Region lifecycle completes immediately
 
 #### ToExecute Regions (Normal Execution)
-**Location**: `PortCompletedHandler` → `OperatorPortCacheService` → `OperatorPortCacheDao`
+**Location**: `PortCompletedHandler` → `PortMaterialized event` → `ExecutionCacheService` → `OperatorPortCacheService` → `OperatorPortCacheDao`
 
 1. **Execute operators**: Normal execution path via worker actors
 2. **On output port completion** (`PortCompletedHandler`):
-   - Call `OperatorPortCacheService.upsertCachedOutput(...)`:
-     - Compute fingerprint via `FingerprintUtil.computeSubdagFingerprint(physicalPlan, portId)`
-     - Retrieve tuple count (best-effort via `DocumentFactory.openDocument(uri).getCount`)
-     - Upsert to `operator_port_cache` table via DAO with:
+   - Retrieve result URI from `WorkflowExecutionsResource.getResultUriByPhysicalPortId`
+   - Retrieve tuple count (best-effort via `DocumentFactory.openDocument(uri).getCount`)
+   - Send `PortMaterialized(portId, resultUri, tupleCount)` event to client via `sendToClient()`
+3. **Service layer** (`ExecutionCacheService`):
+   - Registered callback via `client.registerCallback[PortMaterialized]` receives event
+   - Calls `OperatorPortCacheService.upsertCachedOutput(...)`:
+     - Computes fingerprint via `FingerprintUtil.computeSubdagFingerprint(physicalPlan, portId)`
+     - Upserts to `operator_port_cache` table via DAO with:
        - `workflow_id`, `global_port_id`, `subdag_hash`
        - `fingerprint_json`, `result_uri`
        - `tuple_count`, `source_execution_id`, timestamps
-3. **Normal stats emission**: Real execution metrics sent to client
+4. **Normal stats emission**: Real execution metrics sent to client
+
+**Architecture note**: Event-based communication follows existing controller pattern - handler emits events via `sendToClient()`, service layer registers callbacks to handle them. Clean separation: engine layer knows nothing about web/service layer.
 
 ### 4. Client-Side State Management
 **Location**: `ExecutionStatsService`, `ExecutionStateStore`
@@ -218,260 +225,25 @@ HTTP endpoints for external access (if needed):
 
 **Note**: Internal services use `OperatorPortCacheService`, not the REST resource.
 
-### 6. Implementation Guide
+### 6. Implemented Components Reference
 
-#### Step 1: Create OperatorPortCacheDao
-**File**: `/amber/src/main/scala/org/apache/texera/web/dao/OperatorPortCacheDao.scala`
+Phase 1.1 Service/DAO architecture is complete. Key components:
 
-```scala
-package org.apache.texera.web.dao
+| Component | Location | Purpose |
+|-----------|----------|---------|
+| **OperatorPortCacheDao** | `/amber/src/main/scala/org/apache/texera/web/dao/OperatorPortCacheDao.scala` | Low-level database access using Jooq. Methods: `get()`, `upsert()`, `deleteByWorkflow()` |
+| **OperatorPortCacheService** | `/amber/src/main/scala/org/apache/texera/web/service/OperatorPortCacheService.scala` | High-level cache operations. Methods: `lookupCachedOutputs()`, `upsertCachedOutput()`, `invalidateWorkflowCache()` |
+| **ExecutionCacheService** | `/amber/src/main/scala/org/apache/texera/web/service/ExecutionCacheService.scala` | Event listener that registers callback for `PortMaterialized` events and bridges to service layer |
+| **PortMaterialized Event** | `/amber/src/main/scala/org/apache/texera/amber/engine/architecture/controller/ClientEvent.scala` | Client event emitted when output port completes with URI and tuple count |
 
-import org.apache.texera.amber.core.virtualidentity.ExecutionIdentity
-import org.apache.texera.dao.SqlServer
-import org.apache.texera.dao.jooq.generated.Tables.OPERATOR_PORT_CACHE
-import org.jooq.DSLContext
+**Integration Points**:
+- **WorkflowService**: Instantiates `cacheService` at workflow level (shared across executions)
+- **WorkflowExecutionService**:
+  - Uses `cacheService.lookupCachedOutputs()` at submission time
+  - Instantiates `executionCacheService` per execution for cache writes
+- **PortCompletedHandler**: Emits `PortMaterialized` event via `sendToClient()` when output ports complete
 
-import java.net.URI
-import scala.jdk.OptionConverters._
-
-case class OperatorPortCacheRecord(
-    workflowId: Long,
-    globalPortId: String,
-    subdagHash: String,
-    fingerprintJson: String,
-    resultUri: URI,
-    tupleCount: Option[Long],
-    sourceExecutionId: Option[Long],
-    createdAt: Long,
-    updatedAt: Long
-)
-
-class OperatorPortCacheDao(sqlServer: SqlServer) {
-  private val context: DSLContext = sqlServer.createDSLContext()
-
-  def get(
-      workflowId: Long,
-      serializedPortId: String,
-      subdagHash: String
-  ): Option[OperatorPortCacheRecord] = {
-    context
-      .select(
-        OPERATOR_PORT_CACHE.WORKFLOW_ID,
-        OPERATOR_PORT_CACHE.GLOBAL_PORT_ID,
-        OPERATOR_PORT_CACHE.SUBDAG_HASH,
-        OPERATOR_PORT_CACHE.FINGERPRINT_JSON,
-        OPERATOR_PORT_CACHE.RESULT_URI,
-        OPERATOR_PORT_CACHE.TUPLE_COUNT,
-        OPERATOR_PORT_CACHE.SOURCE_EXECUTION_ID,
-        OPERATOR_PORT_CACHE.CREATED_AT,
-        OPERATOR_PORT_CACHE.UPDATED_AT
-      )
-      .from(OPERATOR_PORT_CACHE)
-      .where(OPERATOR_PORT_CACHE.WORKFLOW_ID.eq(workflowId.toInt))
-      .and(OPERATOR_PORT_CACHE.GLOBAL_PORT_ID.eq(serializedPortId))
-      .and(OPERATOR_PORT_CACHE.SUBDAG_HASH.eq(subdagHash))
-      .fetchOptional()
-      .toScala
-      .map { record =>
-        OperatorPortCacheRecord(
-          workflowId = record.value1().longValue(),
-          globalPortId = record.value2(),
-          subdagHash = record.value3(),
-          fingerprintJson = record.value4(),
-          resultUri = URI.create(record.value5()),
-          tupleCount = Option(record.value6()).map(_.longValue()),
-          sourceExecutionId = Option(record.value7()).map(_.longValue()),
-          createdAt = record.value8().longValue(),
-          updatedAt = record.value9().longValue()
-        )
-      }
-  }
-
-  def upsert(record: OperatorPortCacheRecord): Unit = {
-    val dbRecord = context.newRecord(OPERATOR_PORT_CACHE)
-    dbRecord.setWorkflowId(record.workflowId.toInt)
-    dbRecord.setGlobalPortId(record.globalPortId)
-    dbRecord.setSubdagHash(record.subdagHash)
-    dbRecord.setFingerprintJson(record.fingerprintJson)
-    dbRecord.setResultUri(record.resultUri.toString)
-    record.tupleCount.foreach(c => dbRecord.setTupleCount(Long.box(c)))
-    record.sourceExecutionId.foreach(eid => dbRecord.setSourceExecutionId(Long.box(eid)))
-
-    context
-      .insertInto(OPERATOR_PORT_CACHE)
-      .set(dbRecord)
-      .onConflict(
-        OPERATOR_PORT_CACHE.WORKFLOW_ID,
-        OPERATOR_PORT_CACHE.GLOBAL_PORT_ID,
-        OPERATOR_PORT_CACHE.SUBDAG_HASH
-      )
-      .doUpdate()
-      .set(OPERATOR_PORT_CACHE.RESULT_URI, dbRecord.getResultUri)
-      .set(OPERATOR_PORT_CACHE.FINGERPRINT_JSON, dbRecord.getFingerprintJson)
-      .set(OPERATOR_PORT_CACHE.TUPLE_COUNT, dbRecord.getTupleCount)
-      .set(OPERATOR_PORT_CACHE.SOURCE_EXECUTION_ID, dbRecord.getSourceExecutionId)
-      .execute()
-  }
-
-  def deleteByWorkflow(workflowId: Long): Unit = {
-    context
-      .deleteFrom(OPERATOR_PORT_CACHE)
-      .where(OPERATOR_PORT_CACHE.WORKFLOW_ID.eq(workflowId.toInt))
-      .execute()
-  }
-}
-```
-
-#### Step 2: Create OperatorPortCacheService
-**File**: `/amber/src/main/scala/org/apache/texera/web/service/OperatorPortCacheService.scala`
-
-```scala
-package org.apache.texera.web.service
-
-import org.apache.texera.amber.core.storage.DocumentFactory
-import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
-import org.apache.texera.amber.core.workflow.cache.FingerprintUtil
-import org.apache.texera.amber.core.workflow.{CachedOutput, GlobalPortIdentity, PhysicalPlan}
-import org.apache.texera.amber.util.serde.GlobalPortIdentitySerde.SerdeOps
-import org.apache.texera.web.dao.{OperatorPortCacheDao, OperatorPortCacheRecord}
-
-import java.net.URI
-
-class OperatorPortCacheService(dao: OperatorPortCacheDao) {
-
-  /**
-    * Lookup cached outputs for all materializable ports in the physical plan.
-    * Called at workflow submission time.
-    */
-  def lookupCachedOutputs(
-      workflowId: WorkflowIdentity,
-      physicalPlan: PhysicalPlan
-  ): Map[GlobalPortIdentity, CachedOutput] = {
-    physicalPlan.operators
-      .flatMap(op => op.outputPorts.keys.map(pid => GlobalPortIdentity(op.id, pid)))
-      .flatMap { gpid =>
-        val fingerprint = FingerprintUtil.computeSubdagFingerprint(physicalPlan, gpid)
-        dao.get(workflowId.id, gpid.serializeAsString, fingerprint.subdagHash).map { record =>
-          gpid -> CachedOutput(
-            resultUri = record.resultUri,
-            fingerprintJson = record.fingerprintJson,
-            tupleCount = record.tupleCount,
-            sourceExecutionId = record.sourceExecutionId.map(ExecutionIdentity(_))
-          )
-        }
-      }
-      .toMap
-  }
-
-  /**
-    * Upsert cache entry when an output port completes.
-    * Called by PortCompletedHandler at runtime.
-    */
-  def upsertCachedOutput(
-      workflowId: WorkflowIdentity,
-      executionId: ExecutionIdentity,
-      portId: GlobalPortIdentity,
-      physicalPlan: PhysicalPlan,
-      resultUri: URI,
-      tupleCount: Option[Long]
-  ): Unit = {
-    val fingerprint = FingerprintUtil.computeSubdagFingerprint(physicalPlan, portId)
-    val now = System.currentTimeMillis()
-
-    dao.upsert(
-      OperatorPortCacheRecord(
-        workflowId = workflowId.id,
-        globalPortId = portId.serializeAsString,
-        subdagHash = fingerprint.subdagHash,
-        fingerprintJson = fingerprint.fingerprintJson,
-        resultUri = resultUri,
-        tupleCount = tupleCount,
-        sourceExecutionId = Some(executionId.id),
-        createdAt = now,
-        updatedAt = now
-      )
-    )
-  }
-
-  /**
-    * Invalidate all cache entries for a workflow.
-    * Useful for manual cache clearing or workflow deletion.
-    */
-  def invalidateWorkflowCache(workflowId: WorkflowIdentity): Unit = {
-    dao.deleteByWorkflow(workflowId.id)
-  }
-
-  /**
-    * Future: Cost-aware eviction when storage quota is exceeded.
-    */
-  def evictLowValueEntries(quotaBytes: Long): Unit = {
-    // Phase 3: Lifecycle management
-    throw new UnsupportedOperationException("Not yet implemented")
-  }
-}
-```
-
-#### Step 3: Update WorkflowExecutionService
-**File**: `/amber/src/main/scala/org/apache/texera/web/service/WorkflowExecutionService.scala`
-
-```scala
-class WorkflowExecutionService(
-    controllerConfig: ControllerConfig,
-    val workflowContext: WorkflowContext,
-    resultService: ExecutionResultService,
-    cacheService: OperatorPortCacheService,  // INJECT HERE
-    request: WorkflowExecuteRequest,
-    val executionStateStore: ExecutionStateStore,
-    errorHandler: Throwable => Unit,
-    userEmailOpt: Option[String],
-    sessionUri: URI
-) extends SubscriptionManager with LazyLogging {
-
-  def executeWorkflow(): Unit = {
-    try {
-      workflow = new WorkflowCompiler(workflowContext).compile(request.logicalPlan)
-
-      // Use cache service for lookup
-      val cachedOutputs = cacheService
-        .lookupCachedOutputs(workflowContext.workflowId, workflow.physicalPlan)
-        .map { case (gpid, cached) => gpid.serializeAsString -> cached }
-
-      workflowContext.workflowSettings =
-        workflowContext.workflowSettings.copy(cachedOutputs = cachedOutputs)
-    } catch {
-      case err: Throwable => errorHandler(err)
-    }
-    // ... rest of method
-  }
-}
-```
-
-#### Step 4: Update PortCompletedHandler
-**File**: `/amber/src/main/scala/org/apache/texera/amber/engine/architecture/controller/promisehandlers/PortCompletedHandler.scala`
-
-```scala
-// Inject OperatorPortCacheService into controller/handler
-
-(storageUriOpt, Option(cp.workflowScheduler.physicalPlan)) match {
-  case (Some(uri), Some(plan)) =>
-    val tupleCount = try {
-      Some(DocumentFactory.openDocument(uri)._1.getCount)
-    } catch {
-      case _: Throwable => None
-    }
-
-    // Use cache service for upsert
-    cacheService.upsertCachedOutput(
-      cp.workflowContext.workflowId,
-      cp.workflowContext.executionId,
-      globalPortId,
-      plan,
-      uri,
-      tupleCount
-    )
-  case _ => // no-op
-}
-```
+**Architecture**: Event-based communication follows existing patterns (ExecutionStatsUpdate, WorkerAssignmentUpdate). Engine layer has zero knowledge of web/service layer.
 
 ### 7. Testing Strategy
 - **Unit tests**: Fingerprint determinism, cost model logic, region classification
@@ -483,33 +255,37 @@ class WorkflowExecutionService(
 
 ### Architecture Layers
 
-**Current (Prototype)**:
+**Clean Architecture (Implemented)**:
 ```
-WorkflowExecutionService ───┐
-                            ├──→ WorkflowExecutionsResource (Jooq)
-PortCompletedHandler ───────┘
-```
-
-**Proposed (Clean Architecture)**:
-```
-WorkflowExecutionService ───┐
-                            ├──→ OperatorPortCacheService ──→ OperatorPortCacheDao (Jooq)
-PortCompletedHandler ───────┤
-                            │
-WorkflowExecutionsResource ─┘ (optional REST endpoints)
+WorkflowExecutionService ──→ lookupCachedOutputs()
+                            ↓
+ExecutionCacheService ────→ upsertCachedOutput()     OperatorPortCacheService
+    ↑                           ↓                             ↓
+    └─ registerCallback() ──────┘                    OperatorPortCacheDao (Jooq)
+         (PortMaterialized event)                             ↓
+                                                        operator_port_cache table
 ```
 
-**Refactoring needed**:
-1. Extract Jooq code from `WorkflowExecutionsResource` → `OperatorPortCacheDao`
-2. Create `OperatorPortCacheService` with workflow-level abstractions
-3. Update service call sites to use `OperatorPortCacheService`
+**Event-based communication flow**:
+1. `PortCompletedHandler` emits `PortMaterialized` event via `sendToClient()`
+2. `ExecutionCacheService` registers callback via `client.registerCallback[PortMaterialized]`
+3. Callback invokes `OperatorPortCacheService.upsertCachedOutput()`
+4. Service calls `OperatorPortCacheDao.upsert()` for database persistence
+
+**Clean layering**: Engine layer (PortCompletedHandler) has zero knowledge of web/service layer. Event-based pattern matches existing controller communication (ExecutionStatsUpdate, WorkerAssignmentUpdate, etc.).
 
 ### Completed Components
-- **Schema/migration**: `operator_port_cache` table added (`sql/texera_ddl.sql`, `sql/updates/16.sql`)
+- **Schema/migration**: `operator_port_cache` table added (`sql/updates/cache.sql`)
+  - Columns: `workflow_id`, `global_port_id`, `subdag_hash` (PK), `fingerprint_json`, `result_uri`, `tuple_count`, `source_execution_id`, `updated_at`
+  - Timestamp managed by database (`DEFAULT now()`)
+- **Service/DAO architecture** (Phase 1.1 - Complete):
+  - `OperatorPortCacheDao`: Low-level database access with get/upsert/delete methods
+  - `OperatorPortCacheService`: High-level cache operations (lookupCachedOutputs, upsertCachedOutput, invalidateWorkflowCache)
+  - `ExecutionCacheService`: Event listener bridging controller events to service layer
+  - Event-based communication via `PortMaterialized` event and `client.registerCallback[T]`
 - **Fingerprinting**: `FingerprintUtil` implemented with workflow-based specs for deterministic subDAG hashing
-- **Submission-time lookup**: `WorkflowExecutionService` computes fingerprints for all physical output ports, queries cache, stores hits in `WorkflowSettings.cachedOutputs`
-- **Cache persistence**: `PortCompletedHandler` upserts to `operator_port_cache` on output port completion (includes fingerprint, URI, tuple count)
-- **API layer**: `WorkflowExecutionsResource` exposes cache lookup/upsert helpers
+- **Submission-time lookup**: `WorkflowExecutionService` uses `OperatorPortCacheService.lookupCachedOutputs()` to compute fingerprints for all physical output ports, queries cache, stores hits in `WorkflowSettings.cachedOutputs`
+- **Cache persistence**: `PortCompletedHandler` emits `PortMaterialized` event → `ExecutionCacheService` → `OperatorPortCacheService.upsertCachedOutput()` → `OperatorPortCacheDao.upsert()` (includes fingerprint, URI, tuple count)
 - **Scheduler integration**: `CostBasedScheduleGenerator` marks regions cached when all required outputs have hits, reuses cached URIs in port configs
 - **Runtime execution**: `RegionExecutionCoordinator` branches on `region.cached` flag:
   - ToSkip regions: `completeCachedRegion()` creates shallow state hierarchy, emits synthetic stats (numWorkers=0, processingTime=0), propagates cached URIs downstream
@@ -586,18 +362,31 @@ The cache system integrates with three layers:
 
 ### Phase 1: Complete Prototype (Engineering)
 
-#### 1.1 Refactor to Service/DAO Architecture
-- [ ] Create `OperatorPortCacheDao` with get/upsert/delete methods
-  - Extract Jooq code from `WorkflowExecutionsResource`
-  - Define `OperatorPortCacheRecord` case class
-  - Add unit tests for DAO operations
-- [ ] Create `OperatorPortCacheService` with high-level methods
+#### 1.1 Refactor to Service/DAO Architecture ✓ COMPLETE
+- [x] Create `OperatorPortCacheDao` with get/upsert/delete methods
+  - Extracted Jooq code into dedicated DAO layer
+  - Defined `OperatorPortCacheRecord` case class matching database schema
+  - Location: `/amber/src/main/scala/org/apache/texera/web/dao/OperatorPortCacheDao.scala`
+- [x] Create `OperatorPortCacheService` with high-level methods
   - `lookupCachedOutputs(workflowId, physicalPlan)`: batch lookup at submission
   - `upsertCachedOutput(...)`: cache write on port completion
   - `invalidateWorkflowCache(workflowId)`: manual invalidation
-  - Encapsulate fingerprint computation and serialization
-- [ ] Refactor `WorkflowExecutionService.computeCachedOutputs()` to use service
-- [ ] Refactor `PortCompletedHandler` to use service
+  - Encapsulates fingerprint computation and serialization
+  - Location: `/amber/src/main/scala/org/apache/texera/web/service/OperatorPortCacheService.scala`
+- [x] Create `ExecutionCacheService` for event handling
+  - Registers callback for `PortMaterialized` events
+  - Bridges controller events to service layer
+  - Location: `/amber/src/main/scala/org/apache/texera/web/service/ExecutionCacheService.scala`
+- [x] Add `PortMaterialized` event type
+  - Location: `/amber/src/main/scala/org/apache/texera/amber/engine/architecture/controller/ClientEvent.scala`
+- [x] Refactor `WorkflowExecutionService.computeCachedOutputs()` to use service
+  - Uses `OperatorPortCacheService.lookupCachedOutputs()`
+- [x] Refactor `PortCompletedHandler` to emit events
+  - Emits `PortMaterialized` event via `sendToClient()` instead of direct service calls
+- [x] Instantiate services in `WorkflowService` and `WorkflowExecutionService`
+  - `cacheService` created at workflow level
+  - `executionCacheService` created per execution
+- [ ] Add unit tests for DAO operations
 - [ ] (Optional) Add REST endpoints in `WorkflowExecutionsResource` that delegate to service
 
 #### 1.2 Testing & Validation

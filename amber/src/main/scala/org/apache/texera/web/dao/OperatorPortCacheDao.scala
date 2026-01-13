@@ -1,0 +1,147 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
+package org.apache.texera.web.dao
+
+import org.apache.texera.dao.SqlServer
+import org.apache.texera.dao.jooq.generated.Tables.OPERATOR_PORT_CACHE
+import org.jooq.DSLContext
+
+import java.net.URI
+import scala.jdk.OptionConverters._
+
+/**
+  * Record representing a cache entry in the operator_port_cache table.
+  *
+  * @param workflowId Workflow ID
+  * @param globalPortId Serialized GlobalPortIdentity
+  * @param subdagHash SHA-256 hash of the upstream subDAG fingerprint
+  * @param fingerprintJson Canonical JSON of the upstream subDAG
+  * @param resultUri URI of the materialized output
+  * @param tupleCount Number of tuples in the cached output (optional)
+  * @param sourceExecutionId Execution ID that produced this cache entry (optional)
+  *
+  * Note: updated_at timestamp is managed by the database (DEFAULT now())
+  */
+case class OperatorPortCacheRecord(
+    workflowId: Long,
+    globalPortId: String,
+    subdagHash: String,
+    fingerprintJson: String,
+    resultUri: URI,
+    tupleCount: Option[Long],
+    sourceExecutionId: Option[Long]
+)
+
+/**
+  * Data Access Object for operator_port_cache table.
+  * Provides low-level CRUD operations using Jooq.
+  *
+  * @param sqlServer SqlServer instance for database access
+  */
+class OperatorPortCacheDao(sqlServer: SqlServer) {
+  private val context: DSLContext = sqlServer.createDSLContext()
+
+  /**
+    * Retrieve a cache entry by primary key (workflow_id, global_port_id, subdag_hash).
+    *
+    * @param workflowId Workflow ID
+    * @param serializedPortId Serialized GlobalPortIdentity string
+    * @param subdagHash SHA-256 hash of the upstream subDAG fingerprint
+    * @return Some(OperatorPortCacheRecord) if found, None otherwise
+    */
+  def get(
+      workflowId: Long,
+      serializedPortId: String,
+      subdagHash: String
+  ): Option[OperatorPortCacheRecord] = {
+    context
+      .select(
+        OPERATOR_PORT_CACHE.WORKFLOW_ID,
+        OPERATOR_PORT_CACHE.GLOBAL_PORT_ID,
+        OPERATOR_PORT_CACHE.SUBDAG_HASH,
+        OPERATOR_PORT_CACHE.FINGERPRINT_JSON,
+        OPERATOR_PORT_CACHE.RESULT_URI,
+        OPERATOR_PORT_CACHE.TUPLE_COUNT,
+        OPERATOR_PORT_CACHE.SOURCE_EXECUTION_ID
+      )
+      .from(OPERATOR_PORT_CACHE)
+      .where(OPERATOR_PORT_CACHE.WORKFLOW_ID.eq(workflowId.toInt))
+      .and(OPERATOR_PORT_CACHE.GLOBAL_PORT_ID.eq(serializedPortId))
+      .and(OPERATOR_PORT_CACHE.SUBDAG_HASH.eq(subdagHash))
+      .fetchOptional()
+      .toScala
+      .map { record =>
+        OperatorPortCacheRecord(
+          workflowId = record.value1().longValue(),
+          globalPortId = record.value2(),
+          subdagHash = record.value3(),
+          fingerprintJson = record.value4(),
+          resultUri = URI.create(record.value5()),
+          tupleCount = Option(record.value6()).map(_.longValue()),
+          sourceExecutionId = Option(record.value7()).map(_.longValue())
+        )
+      }
+  }
+
+  /**
+    * Insert or update a cache entry (upsert).
+    * On conflict (workflow_id, global_port_id, subdag_hash), updates the existing record.
+    *
+    * @param record OperatorPortCacheRecord to insert/update
+    */
+  def upsert(record: OperatorPortCacheRecord): Unit = {
+    val dbRecord = context.newRecord(OPERATOR_PORT_CACHE)
+    dbRecord.setWorkflowId(record.workflowId.toInt)
+    dbRecord.setGlobalPortId(record.globalPortId)
+    dbRecord.setSubdagHash(record.subdagHash)
+    dbRecord.setFingerprintJson(record.fingerprintJson)
+    dbRecord.setResultUri(record.resultUri.toString)
+    record.tupleCount.foreach(c => dbRecord.setTupleCount(Long.box(c)))
+    record.sourceExecutionId.foreach(eid => dbRecord.setSourceExecutionId(Long.box(eid)))
+
+    context
+      .insertInto(OPERATOR_PORT_CACHE)
+      .set(dbRecord)
+      .onConflict(
+        OPERATOR_PORT_CACHE.WORKFLOW_ID,
+        OPERATOR_PORT_CACHE.GLOBAL_PORT_ID,
+        OPERATOR_PORT_CACHE.SUBDAG_HASH
+      )
+      .doUpdate()
+      .set(OPERATOR_PORT_CACHE.RESULT_URI, dbRecord.getResultUri)
+      .set(OPERATOR_PORT_CACHE.FINGERPRINT_JSON, dbRecord.getFingerprintJson)
+      .set(OPERATOR_PORT_CACHE.TUPLE_COUNT, dbRecord.getTupleCount)
+      .set(OPERATOR_PORT_CACHE.SOURCE_EXECUTION_ID, dbRecord.getSourceExecutionId)
+      .execute()
+  }
+
+  /**
+    * Delete all cache entries for a specific workflow.
+    * Useful for cache invalidation when a workflow is deleted or manually cleared.
+    *
+    * @param workflowId Workflow ID whose cache entries should be deleted
+    */
+  def deleteByWorkflow(workflowId: Long): Unit = {
+    context
+      .deleteFrom(OPERATOR_PORT_CACHE)
+      .where(OPERATOR_PORT_CACHE.WORKFLOW_ID.eq(workflowId.toInt))
+      .execute()
+  }
+}
