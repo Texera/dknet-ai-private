@@ -30,7 +30,11 @@ import org.apache.texera.amber.engine.common.client.AmberClient
 import org.apache.texera.amber.engine.common.executionruntimestate.ExecutionMetadataStore
 import org.apache.texera.amber.core.workflow.{CachedOutput, GlobalPortIdentity}
 import org.apache.texera.amber.util.serde.GlobalPortIdentitySerde.SerdeOps
-import org.apache.texera.web.model.websocket.event.{TexeraWebSocketEvent, WorkflowErrorEvent, WorkflowStateEvent}
+import org.apache.texera.web.model.websocket.event.{
+  TexeraWebSocketEvent,
+  WorkflowErrorEvent,
+  WorkflowStateEvent
+}
 import org.apache.texera.web.model.websocket.request.WorkflowExecuteRequest
 import org.apache.texera.web.resource.dashboard.user.workflow.WorkflowExecutionsResource
 import org.apache.texera.web.storage.ExecutionStateStore

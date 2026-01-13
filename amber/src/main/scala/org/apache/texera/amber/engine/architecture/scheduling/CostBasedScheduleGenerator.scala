@@ -70,11 +70,11 @@ class CostBasedScheduleGenerator(
       actorId = actorId
     )
 
-  private val cachedOutputsByPort
-      : Map[GlobalPortIdentity, CachedOutput] = workflowContext.workflowSettings.cachedOutputs.map {
-    case (serializedId, cachedOutput) =>
-      GlobalPortIdentitySerde.deserializeFromString(serializedId) -> cachedOutput
-  }
+  private val cachedOutputsByPort: Map[GlobalPortIdentity, CachedOutput] =
+    workflowContext.workflowSettings.cachedOutputs.map {
+      case (serializedId, cachedOutput) =>
+        GlobalPortIdentitySerde.deserializeFromString(serializedId) -> cachedOutput
+    }
 
   private case class CostEstimatorMemoKey(
       physicalOpIds: Set[PhysicalOpIdentity],
@@ -332,8 +332,7 @@ class CostBasedScheduleGenerator(
     if (isAcyclic) {
       annotateRegionsWithCacheInfo(regionDAG, matEdges, opToRegionMap.toMap)
       Left(regionDAG)
-    }
-    else Right(regionGraph)
+    } else Right(regionGraph)
   }
 
   /**

@@ -23,8 +23,16 @@ import com.twitter.util.Future
 import org.apache.texera.amber.core.WorkflowRuntimeException
 import org.apache.texera.amber.core.storage.DocumentFactory
 import org.apache.texera.amber.core.workflow.GlobalPortIdentity
-import org.apache.texera.amber.engine.architecture.controller.{ControllerAsyncRPCHandlerInitializer, FatalError, PortMaterialized}
-import org.apache.texera.amber.engine.architecture.rpc.controlcommands.{AsyncRPCContext, PortCompletedRequest, QueryStatisticsRequest}
+import org.apache.texera.amber.engine.architecture.controller.{
+  ControllerAsyncRPCHandlerInitializer,
+  FatalError,
+  PortMaterialized
+}
+import org.apache.texera.amber.engine.architecture.rpc.controlcommands.{
+  AsyncRPCContext,
+  PortCompletedRequest,
+  QueryStatisticsRequest
+}
 import org.apache.texera.amber.engine.architecture.rpc.controlreturns.EmptyReturn
 import org.apache.texera.amber.engine.common.virtualidentity.util.CONTROLLER
 import org.apache.texera.amber.util.VirtualIdentityUtils

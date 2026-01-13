@@ -35,7 +35,10 @@ class FingerprintUtilSpec extends AnyFlatSpec with Matchers {
   private def newCsv(): CSVScanSourceOpDesc =
     TestOperators.headerlessSmallCsvScanOpDesc()
 
-  private def newKeyword(pattern: String = "Asia", logicalId: Option[String] = None): KeywordSearchOpDesc = {
+  private def newKeyword(
+      pattern: String = "Asia",
+      logicalId: Option[String] = None
+  ): KeywordSearchOpDesc = {
     val op = TestOperators.keywordSearchOpDesc("column-1", pattern)
     logicalId.foreach(id => op.setOperatorId(id))
     op

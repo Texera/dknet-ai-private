@@ -23,7 +23,12 @@ import com.fasterxml.jackson.annotation.JsonInclude
 import com.fasterxml.jackson.databind.{ObjectMapper, SerializationFeature}
 import com.fasterxml.jackson.databind.node.ObjectNode
 import org.apache.texera.amber.core.executor.OpExecInitInfo
-import org.apache.texera.amber.core.workflow.{GlobalPortIdentity, PhysicalLink, PhysicalOp, PhysicalPlan}
+import org.apache.texera.amber.core.workflow.{
+  GlobalPortIdentity,
+  PhysicalLink,
+  PhysicalOp,
+  PhysicalPlan
+}
 
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
@@ -112,7 +117,9 @@ object FingerprintUtil {
 
     val edgeArray = objectMapper.createArrayNode()
     links.toList
-      .sortBy(link => (link.fromOpId.toString, link.fromPortId.id, link.toOpId.toString, link.toPortId.id))
+      .sortBy(link =>
+        (link.fromOpId.toString, link.fromPortId.id, link.toOpId.toString, link.toPortId.id)
+      )
       .foreach(link => edgeArray.add(buildEdge(link)))
     root.set("edges", edgeArray)
 

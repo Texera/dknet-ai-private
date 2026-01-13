@@ -25,17 +25,45 @@ import org.apache.texera.amber.core.storage.DocumentFactory
 import org.apache.texera.amber.core.storage.VFSURIFactory.decodeURI
 import org.apache.texera.amber.core.virtualidentity.ActorVirtualIdentity
 import org.apache.texera.amber.core.workflow.{GlobalPortIdentity, PhysicalLink, PhysicalOp}
-import org.apache.texera.amber.engine.architecture.common.{AkkaActorRefMappingService, AkkaActorService, ExecutorDeployment}
-import org.apache.texera.amber.engine.architecture.controller.execution.{OperatorExecution, RegionExecution, WorkflowExecution}
-import org.apache.texera.amber.engine.architecture.controller.{ControllerConfig, ExecutionStateUpdate, ExecutionStatsUpdate, WorkerAssignmentUpdate}
+import org.apache.texera.amber.engine.architecture.common.{
+  AkkaActorRefMappingService,
+  AkkaActorService,
+  ExecutorDeployment
+}
+import org.apache.texera.amber.engine.architecture.controller.execution.{
+  OperatorExecution,
+  RegionExecution,
+  WorkflowExecution
+}
+import org.apache.texera.amber.engine.architecture.controller.{
+  ControllerConfig,
+  ExecutionStateUpdate,
+  ExecutionStatsUpdate,
+  WorkerAssignmentUpdate
+}
 import org.apache.texera.amber.engine.architecture.rpc.controlcommands._
-import org.apache.texera.amber.engine.architecture.rpc.controlreturns.{EmptyReturn, WorkflowAggregatedState}
-import org.apache.texera.amber.engine.architecture.scheduling.config.{InputPortConfig, OperatorConfig, OutputPortConfig, ResourceConfig}
+import org.apache.texera.amber.engine.architecture.rpc.controlreturns.{
+  EmptyReturn,
+  WorkflowAggregatedState
+}
+import org.apache.texera.amber.engine.architecture.scheduling.config.{
+  InputPortConfig,
+  OperatorConfig,
+  OutputPortConfig,
+  ResourceConfig
+}
 import org.apache.texera.amber.engine.architecture.sendsemantics.partitionings.Partitioning
-import org.apache.texera.amber.engine.architecture.worker.statistics.{PortTupleMetricsMapping, TupleMetrics, WorkerState}
+import org.apache.texera.amber.engine.architecture.worker.statistics.{
+  PortTupleMetricsMapping,
+  TupleMetrics,
+  WorkerState
+}
 import org.apache.texera.amber.engine.common.AmberLogging
 import org.apache.texera.amber.engine.common.FutureBijection._
-import org.apache.texera.amber.engine.common.executionruntimestate.{OperatorMetrics, OperatorStatistics}
+import org.apache.texera.amber.engine.common.executionruntimestate.{
+  OperatorMetrics,
+  OperatorStatistics
+}
 import org.apache.texera.amber.engine.common.rpc.AsyncRPCClient
 import org.apache.texera.amber.engine.common.virtualidentity.util.CONTROLLER
 import org.apache.texera.web.SessionState
@@ -109,10 +137,12 @@ class RegionExecutionCoordinator(
       val opExecution = regionExecution.initOperatorExecution(op.id)
       // Cached regions do not create workers; synthesize operator-level metrics instead.
       val outputMetrics = op.outputPorts.keys.map { pid =>
-        val count = resourceConfig.portConfigs.collectFirst {
-          case (gpid, cfg: OutputPortConfig) if gpid == GlobalPortIdentity(op.id, pid) =>
-            cfg.cachedTupleCount.getOrElse(0L)
-        }.getOrElse(0L)
+        val count = resourceConfig.portConfigs
+          .collectFirst {
+            case (gpid, cfg: OutputPortConfig) if gpid == GlobalPortIdentity(op.id, pid) =>
+              cfg.cachedTupleCount.getOrElse(0L)
+          }
+          .getOrElse(0L)
         PortTupleMetricsMapping(pid, TupleMetrics(count, 0L))
       }.toSeq
       val inputMetrics = op.inputPorts.keys
@@ -122,7 +152,7 @@ class RegionExecutionCoordinator(
         WorkflowAggregatedState.COMPLETED,
         OperatorStatistics(
           inputMetrics,
-          outputMetrics,
+          outputMetrics
         )
       )
       opExecution.setCachedMetrics(stats)
@@ -135,13 +165,14 @@ class RegionExecutionCoordinator(
   }
 
   private def recordCachedOutputPortResults(resourceConfig: ResourceConfig): Unit = {
-    resourceConfig.portConfigs.collect { case (gpid, cfg: OutputPortConfig) =>
-      val storageUri = cfg.storageURI
-      WorkflowExecutionsResource.insertOperatorPortResultUri(
-        eid = executionId,
-        globalPortId = gpid,
-        uri = storageUri
-      )
+    resourceConfig.portConfigs.collect {
+      case (gpid, cfg: OutputPortConfig) =>
+        val storageUri = cfg.storageURI
+        WorkflowExecutionsResource.insertOperatorPortResultUri(
+          eid = executionId,
+          globalPortId = gpid,
+          uri = storageUri
+        )
     }
   }
 

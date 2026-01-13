@@ -500,7 +500,11 @@ object WorkflowExecutionsResource {
     context
       .insertInto(OPERATOR_PORT_CACHE)
       .set(record)
-      .onConflict(OPERATOR_PORT_CACHE.WORKFLOW_ID, OPERATOR_PORT_CACHE.GLOBAL_PORT_ID, OPERATOR_PORT_CACHE.SUBDAG_HASH)
+      .onConflict(
+        OPERATOR_PORT_CACHE.WORKFLOW_ID,
+        OPERATOR_PORT_CACHE.GLOBAL_PORT_ID,
+        OPERATOR_PORT_CACHE.SUBDAG_HASH
+      )
       .doUpdate()
       .set(OPERATOR_PORT_CACHE.RESULT_URI, record.getResultUri)
       .set(OPERATOR_PORT_CACHE.FINGERPRINT_JSON, record.getFingerprintJson)
@@ -586,7 +590,8 @@ object WorkflowExecutionsResource {
         val tupleCount = Option(record.get(OPERATOR_PORT_CACHE.TUPLE_COUNT)).map(_.longValue())
         val fp = record.get(OPERATOR_PORT_CACHE.FINGERPRINT_JSON)
         val sourceEid =
-          Option(record.get(OPERATOR_PORT_CACHE.SOURCE_EXECUTION_ID)).map(id => ExecutionIdentity(id.longValue()))
+          Option(record.get(OPERATOR_PORT_CACHE.SOURCE_EXECUTION_ID))
+            .map(id => ExecutionIdentity(id.longValue()))
         (uri, tupleCount, fp, sourceEid)
       }
   }

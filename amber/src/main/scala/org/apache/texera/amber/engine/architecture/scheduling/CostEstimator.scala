@@ -73,11 +73,12 @@ class DefaultCostEstimator(
         0.0
       } else {
         val opCost = region.getOperators.size * DEFAULT_OPERATOR_COST
-        val writeCost = resourceConfig.portConfigs.values.collect { case _: OutputPortConfig =>
-          0.5
+        val writeCost = resourceConfig.portConfigs.values.collect {
+          case _: OutputPortConfig =>
+            0.5
         }.sum
         val readCost = resourceConfig.portConfigs.values.collect {
-          case _: InputPortConfig              => 0.5
+          case _: InputPortConfig             => 0.5
           case _: IntermediateInputPortConfig => 0.5
         }.sum
         opCost + writeCost + readCost
