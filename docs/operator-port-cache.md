@@ -131,7 +131,7 @@ Entry point: `RegionExecutionCoordinator` constructor branches on `region.cached
 1. **Execute operators**: Normal execution path via worker actors
 2. **On output port completion** (`PortCompletedHandler`):
    - Retrieve result URI from `WorkflowExecutionsResource.getResultUriByPhysicalPortId`
-   - Retrieve tuple count (best-effort via `DocumentFactory.openDocument(uri).getCount`)
+  - Retrieve tuple count (best-effort via runtime stats from worker metrics)
    - Send `PortMaterialized(portId, resultUri, tupleCount)` event to client via `sendToClient()`
 3. **Service layer** (`ExecutionCacheService`):
    - Registered callback via `client.registerCallback[PortMaterialized]` receives event
@@ -216,7 +216,7 @@ class OperatorPortCacheService(dao: OperatorPortCacheDao) {
 **Key responsibilities**:
 - Encapsulates fingerprint computation (calls `FingerprintUtil`)
 - Handles `GlobalPortIdentity` ↔ String serialization
-- Manages tuple count retrieval (best-effort via `DocumentFactory`)
+- Manages tuple count propagation (best-effort via runtime stats)
 - Provides workflow-level abstractions (batch lookup, invalidation)
 
 #### WorkflowExecutionsResource (REST API - Optional)

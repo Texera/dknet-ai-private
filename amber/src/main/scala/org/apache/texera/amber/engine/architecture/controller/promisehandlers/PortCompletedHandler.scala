@@ -21,7 +21,6 @@ package org.apache.texera.amber.engine.architecture.controller.promisehandlers
 
 import com.twitter.util.Future
 import org.apache.texera.amber.core.WorkflowRuntimeException
-import org.apache.texera.amber.core.storage.DocumentFactory
 import org.apache.texera.amber.core.workflow.GlobalPortIdentity
 import org.apache.texera.amber.engine.architecture.controller.{
   ControllerAsyncRPCHandlerInitializer,
@@ -91,12 +90,13 @@ trait PortCompletedHandler {
                     globalPortId
                   )
                 storageUriOpt.foreach { uri =>
-                  val tupleCount =
-                    try {
-                      Some(DocumentFactory.openDocument(uri)._1.getCount)
-                    } catch {
-                      case _: Throwable => None
-                    }
+                  // Prefer runtime statistics over storage reads for tuple counts.
+                  val tupleCount = operatorExecution
+                    .getStats
+                    .operatorStatistics
+                    .outputMetrics
+                    .find(_.portId == msg.portId)
+                    .map(_.tupleMetrics.count)
                   sendToClient(PortMaterialized(globalPortId, uri, tupleCount))
                 }
               }
