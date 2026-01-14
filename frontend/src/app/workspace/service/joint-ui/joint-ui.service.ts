@@ -337,6 +337,8 @@ export class JointUIService {
 
     const inputMetrics = statistics.inputPortMetrics;
     const outputMetrics = statistics.outputPortMetrics;
+    // Cached operators show "-" for inputs and non-materialized outputs.
+    const isSkippedFromCache = statistics.operatorState === OperatorState.CompletedFromCache;
 
     const workerCount = statistics.numWorkers ?? 1;
     element.attr(`.${operatorWorkerCountClass}/text`, "#workers: " + String(workerCount));
@@ -352,7 +354,7 @@ export class JointUIService {
         const parts = portId.split("-");
         const numericSuffix = parts.length > 1 ? parts[1] : portId;
 
-        const count: number = inputMetrics[numericSuffix] ?? 0;
+        const count = inputMetrics[numericSuffix];
         const rawAttrs = (portDef.attrs as any) || {};
         const oldText: string = (rawAttrs[".port-label"] && rawAttrs[".port-label"].text) || "";
         let originalName = oldText.includes(":") ? oldText.split(":", 1)[0].trim() : oldText;
@@ -361,7 +363,7 @@ export class JointUIService {
           originalName = portId;
         }
 
-        const labelText = count.toLocaleString();
+        const labelText = isSkippedFromCache ? "-" : String(count ?? 0);
         element.portProp(portId, "attrs/.port-label/text", labelText);
       }
     });
@@ -372,7 +374,7 @@ export class JointUIService {
         const parts = portId.split("-");
         const numericSuffix = parts.length > 1 ? parts[1] : portId;
 
-        const count: number = outputMetrics[numericSuffix] ?? 0;
+        const count = outputMetrics[numericSuffix];
         const rawAttrs = (portDef.attrs as any) || {};
         const oldText: string = (rawAttrs[".port-label"] && rawAttrs[".port-label"].text) || "";
         let originalName = oldText.includes(":") ? oldText.split(":", 1)[0].trim() : oldText;
@@ -381,7 +383,8 @@ export class JointUIService {
           originalName = portId;
         }
 
-        const labelText = count.toLocaleString();
+        const labelText =
+          isSkippedFromCache && count === undefined ? "-" : String(count ?? 0);
 
         element.portProp(portId, "attrs/.port-label/text", labelText);
       }

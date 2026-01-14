@@ -40,8 +40,8 @@ ToSkip regions create lightweight state structures (Workflow → Region → Oper
 ### 5. Stats Emission via Direct Client Updates
 Cached regions emit synthetic `ExecutionStatsUpdate` messages directly via `asyncRPCClient.sendToClient()`, with cached operator metrics (`numWorkers=0`). This reuses existing stats infrastructure without special-casing the frontend.
 
-### 6. No Explicit Cache Flag in Metrics
-Cached execution is inferred from `numWorkers=0` + instant completion, rather than adding a `from_cache` flag to protobuf messages. This minimizes protocol changes.
+### 6. Explicit Cache State in Metrics
+Cached operators use a dedicated `COMPLETED_FROM_CACHE` state in `WorkflowAggregatedState` protobuf enum. This provides clear visual feedback to users and distinguishes cache-hit completion from normal execution completion.
 
 ### 7. Deferred Lifecycle Management
 V1 assumes unlimited storage. Eviction, TTL, and garbage collection are research topics for future work, not implementation blockers.
@@ -119,6 +119,8 @@ Entry point: `RegionExecutionCoordinator` constructor branches on `region.cached
    - `numWorkers = 0`
    - `dataProcessingTime = 0`, `controlProcessingTime = 0`, `idleTime = 0`
    - Input/output tuple counts from cached metadata
+   - **UI**: The graph view displays `-` for cached input counts and for cached output ports that were not materialized.
+   - **Note**: Cached stats are synthetic (inputs default to 0; non-materialized outputs may be omitted). Do not use them for cost modeling until we add explicit tagging/filtering in `runtime_statistics`.
 5. **Propagate cached URIs**: Downstream operators receive cached `result_uri` for materialized inputs
 6. **No WorkerAssignmentUpdate**: Cached regions don't send worker assignment events (consistent with numWorkers=0)
 7. **Set phase to Completed**: Region lifecycle completes immediately
@@ -292,6 +294,16 @@ ExecutionCacheService ────→ upsertCachedOutput()     OperatorPortCache
   - ToSkip regions: `completeCachedRegion()` records cached operator metrics (numWorkers=0, processingTime=0) without creating workers, propagates cached URIs downstream
   - ToExecute regions: normal execution path
 - **Stats emission**: Cached regions emit `ExecutionStatsUpdate` via direct client updates, maintaining consistency with normal execution lifecycle
+- **Frontend cache visualization** (Phase 1.2 - Complete):
+  - Added `COMPLETED_FROM_CACHE` state to `WorkflowAggregatedState` protobuf enum
+  - Added `CompletedFromCache` phase to `RegionExecutionCoordinator` for cached region lifecycle
+  - Backend state conversion in `Utils.scala`: `aggregatedStateToString`, `stringToAggregatedState`, `maptoStatusCode`
+  - State aggregation in `ExecutionUtils.aggregateStates()` handles `COMPLETED_FROM_CACHE` as terminal state
+  - Frontend `OperatorState` enum includes `CompletedFromCache`
+  - Operator visualization: blue fill color (`#1890ff`) for cached operators in `joint-ui.service.ts`
+  - Port metrics display: cached input counts show `-`, and cached output ports without materialization show `-`
+  - Region visualization: blue fill (`rgba(24,144,255,0.3)`) for cached regions in `workflow-editor.component.ts`
+  - Region visibility: shared state via `WorkflowActionService.showRegion` ensures correct visibility when regions are created during execution
 
 ### Architecture Integration
 The cache system integrates with three layers:
@@ -390,7 +402,29 @@ The cache system integrates with three layers:
 - [ ] Add unit tests for DAO operations
 - [ ] (Optional) Add REST endpoints in `WorkflowExecutionsResource` that delegate to service
 
-#### 1.2 Testing & Validation
+#### 1.2 Frontend Cache Visualization ✓ COMPLETE
+- [x] Add `COMPLETED_FROM_CACHE` state to `WorkflowAggregatedState` protobuf enum
+  - Location: `/amber/src/main/protobuf/.../controlreturns.proto`
+- [x] Add `CompletedFromCache` phase to `RegionExecutionCoordinator`
+  - Cached regions use this phase instead of `Completed`
+  - Location: `/amber/src/main/scala/.../scheduling/RegionExecutionCoordinator.scala`
+- [x] Update backend state conversion functions in `Utils.scala`
+  - `aggregatedStateToString`: `COMPLETED_FROM_CACHE` → `"CompletedFromCache"`
+  - `stringToAggregatedState`: `"completedfromcache"` → `COMPLETED_FROM_CACHE`
+  - `maptoStatusCode`: `COMPLETED_FROM_CACHE` → `6`
+- [x] Update `ExecutionUtils.aggregateStates()` to handle `COMPLETED_FROM_CACHE`
+  - Treated as terminal state alongside `COMPLETED` and `TERMINATED`
+- [x] Add `CompletedFromCache` to frontend `OperatorState` enum
+  - Location: `/frontend/src/app/workspace/types/execute-workflow.interface.ts`
+- [x] Add blue fill color for cached operators in `joint-ui.service.ts`
+  - Color: `#1890ff` (Ant Design blue)
+- [x] Add blue fill for cached regions in `workflow-editor.component.ts`
+  - Color: `rgba(24,144,255,0.3)` (translucent blue)
+- [x] Show `-` for cached input counts and cached output ports without materialization
+- [x] Fix region visibility with shared state via `WorkflowActionService.showRegion`
+  - Ensures regions show correctly when user toggles visibility before execution
+
+#### 1.3 Testing & Validation
 - [ ] Verify downstream cached URI consumption across all operator types
 - [ ] Add integration tests: cache upsert → DB verification
 - [ ] Add E2E tests: run → cache → rerun → verify skip

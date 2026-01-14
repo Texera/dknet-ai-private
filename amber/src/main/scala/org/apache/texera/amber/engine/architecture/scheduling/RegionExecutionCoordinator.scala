@@ -137,15 +137,14 @@ class RegionExecutionCoordinator(
     region.getOperators.foreach { op =>
       val opExecution = regionExecution.initOperatorExecution(op.id)
       // Cached regions do not create workers; synthesize operator-level metrics instead.
-      val outputMetrics = op.outputPorts.keys.map { pid =>
-        val count = resourceConfig.portConfigs
-          .collectFirst {
-            case (gpid, cfg: OutputPortConfig) if gpid == GlobalPortIdentity(op.id, pid) =>
-              cfg.cachedTupleCount.getOrElse(0L)
-          }
-          .getOrElse(0L)
-        PortTupleMetricsMapping(pid, TupleMetrics(count, 0L))
-      }.toSeq
+      val outputMetrics = resourceConfig.portConfigs
+        .collect {
+          case (gpid, cfg: OutputPortConfig) if gpid.opId == op.id =>
+            // Only emit metrics for materialized outputs; UI treats missing ports as skipped.
+            val count = cfg.cachedTupleCount.getOrElse(0L)
+            PortTupleMetricsMapping(gpid.portId, TupleMetrics(count, 0L))
+        }
+        .toSeq
       val inputMetrics = op.inputPorts.keys
         .map(pid => PortTupleMetricsMapping(pid, TupleMetrics(0L, 0L)))
         .toSeq
