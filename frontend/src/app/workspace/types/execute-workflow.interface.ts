@@ -76,6 +76,7 @@ export enum OperatorState {
   Resuming = "Resuming",
   Completed = "Completed",
   Recovering = "Recovering",
+  CompletedFromCache = "CompletedFromCache",
 }
 
 export interface OperatorStatistics

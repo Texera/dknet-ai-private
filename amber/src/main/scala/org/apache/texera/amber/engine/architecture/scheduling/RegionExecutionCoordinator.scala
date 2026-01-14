@@ -115,6 +115,7 @@ class RegionExecutionCoordinator(
   private case object ExecutingDependeePortsPhase extends RegionExecutionPhase
   private case object ExecutingNonDependeePortsPhase extends RegionExecutionPhase
   private case object Completed extends RegionExecutionPhase
+  private case object CompletedFromCache extends RegionExecutionPhase
 
   private val currentPhaseRef: AtomicReference[RegionExecutionPhase] = new AtomicReference(
     Unexecuted
@@ -149,7 +150,7 @@ class RegionExecutionCoordinator(
         .map(pid => PortTupleMetricsMapping(pid, TupleMetrics(0L, 0L)))
         .toSeq
       val stats = OperatorMetrics(
-        WorkflowAggregatedState.COMPLETED,
+        WorkflowAggregatedState.COMPLETED_FROM_CACHE,
         OperatorStatistics(
           inputMetrics,
           outputMetrics
@@ -161,7 +162,7 @@ class RegionExecutionCoordinator(
     asyncRPCClient.sendToClient(
       ExecutionStatsUpdate(workflowExecution.getAllRegionExecutionsStats)
     )
-    setPhase(Completed)
+    setPhase(CompletedFromCache)
   }
 
   private def recordCachedOutputPortResults(resourceConfig: ResourceConfig): Unit = {
@@ -257,7 +258,10 @@ class RegionExecutionCoordinator(
     }
   }
 
-  def isCompleted: Boolean = currentPhaseRef.get == Completed
+  def isCompleted: Boolean = {
+    val phase = currentPhaseRef.get
+    phase == Completed || phase == CompletedFromCache
+  }
 
   /**
     * This will sync and transition the region execution phase from one to another depending on its current phase:
@@ -286,8 +290,8 @@ class RegionExecutionCoordinator(
         }
       case ExecutingNonDependeePortsPhase =>
         tryCompleteRegionExecution()
-      case Completed =>
-        // Already completed, no further action needed.
+      case Completed | CompletedFromCache =>
+        // Already completed or used cache, no further action needed.
         Future.Unit
     }
 

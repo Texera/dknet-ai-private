@@ -126,6 +126,7 @@ enum WorkflowAggregatedState {
   UNKNOWN = 8;
   KILLED = 9;
   TERMINATED = 10;
+  COMPLETED_FROM_CACHE = 11;
 }
 
 message StartWorkflowResponse {

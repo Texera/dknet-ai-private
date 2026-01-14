@@ -472,7 +472,14 @@ export class MenuComponent implements OnInit, OnDestroy {
   }
 
   public toggleRegion(): void {
-    this.workflowActionService.getJointGraphWrapper().mainPaper.el.classList.toggle("hide-region", !this.showRegion);
+    // Update shared state so WorkflowEditorComponent can use it when creating region elements
+    this.workflowActionService.setShowRegion(this.showRegion);
+    // Apply visibility to any existing region elements
+    this.workflowActionService
+      .getJointGraphWrapper()
+      .jointGraph.getElements()
+      .filter(el => el.get("type") === "region")
+      .forEach(el => el.attr("body/visibility", this.showRegion ? "visible" : "hidden"));
   }
 
   /**

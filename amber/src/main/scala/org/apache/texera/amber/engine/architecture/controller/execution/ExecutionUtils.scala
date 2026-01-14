@@ -50,7 +50,8 @@ object ExecutionUtils {
       WorkflowAggregatedState.RUNNING,
       WorkflowAggregatedState.UNINITIALIZED,
       WorkflowAggregatedState.PAUSED,
-      WorkflowAggregatedState.READY
+      WorkflowAggregatedState.READY,
+      Some(WorkflowAggregatedState.COMPLETED_FROM_CACHE)
     )
 
     def sumMetrics(
@@ -88,15 +89,20 @@ object ExecutionUtils {
       runningState: T,
       uninitializedState: T,
       pausedState: T,
-      readyState: T
+      readyState: T,
+      cachedState: Option[T] = None
   ): WorkflowAggregatedState = {
     states match {
       case _ if states.isEmpty                      => WorkflowAggregatedState.UNINITIALIZED
       case _ if states.forall(_ == completedState)  => WorkflowAggregatedState.COMPLETED
       case _ if states.forall(_ == terminatedState) => WorkflowAggregatedState.COMPLETED
-      case _ if states.exists(_ == runningState)    => WorkflowAggregatedState.RUNNING
+      case _ if cachedState.isDefined && states.forall(_ == cachedState.get) =>
+        WorkflowAggregatedState.COMPLETED_FROM_CACHE
+      case _ if states.exists(_ == runningState) => WorkflowAggregatedState.RUNNING
       case _ =>
-        val unCompletedStates = states.filter(_ != completedState)
+        val terminalStates =
+          Set(completedState, terminatedState) ++ cachedState.toSet
+        val unCompletedStates = states.filterNot(terminalStates.contains)
         if (unCompletedStates.forall(_ == uninitializedState)) {
           WorkflowAggregatedState.UNINITIALIZED
         } else if (unCompletedStates.forall(_ == pausedState)) {

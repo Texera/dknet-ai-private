@@ -428,6 +428,9 @@ export class JointUIService {
       case OperatorState.Completed:
         fillColor = "green";
         break;
+      case OperatorState.CompletedFromCache:
+        fillColor = "#1890ff";
+        break;
       case OperatorState.Pausing:
       case OperatorState.Paused:
         fillColor = "magenta";

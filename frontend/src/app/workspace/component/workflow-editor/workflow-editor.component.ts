@@ -403,21 +403,39 @@ export class WorkflowEditorComponent implements OnInit, AfterViewInit, OnDestroy
     );
 
     let regionMap: { regionElement: joint.dia.Element; operators: joint.dia.Cell[] }[] = [];
+    // Track whether regions should be visible (preserved across element recreation)
+    let regionsVisible = false;
+    const colorMap: Record<string, string> = {
+      ExecutingDependeePortsPhase: "rgba(33,150,243,0.2)",
+      ExecutingNonDependeePortsPhase: "rgba(255,213,79,0.2)",
+      Completed: "rgba(76,175,80,0.2)",
+      CompletedFromCache: "rgba(24,144,255,0.3)",
+    };
+
     // update region elements on execution
     this.executeWorkflowService
       .getRegionUpdateStream()
       .pipe(untilDestroyed(this))
       .subscribe(event => {
-        this.paper.model
-          .getCells()
-          .filter(element => element instanceof Region)
-          .forEach(element => element.remove());
+        // Preserve visibility state from existing elements before removing them
+        const existingRegions = this.paper.model.getCells().filter(element => element instanceof Region);
+        if (existingRegions.length > 0) {
+          regionsVisible = existingRegions[0].attr("body/visibility") === "visible";
+        } else {
+          // No existing regions - use the shared state from workflowActionService
+          regionsVisible = this.workflowActionService.getShowRegion();
+        }
+        existingRegions.forEach(element => element.remove());
 
         regionMap = event.regions.map(([id, region]) => {
           const element = new Region({ id: "region-" + id });
           const ops = region.map(id => this.paper.getModelById(id));
           this.paper.model.addCell(element);
           this.updateRegionElement(element, ops);
+          // Apply visibility state
+          if (regionsVisible) {
+            element.attr("body/visibility", "visible");
+          }
           return { regionElement: element, operators: ops };
         });
       });
@@ -433,12 +451,10 @@ export class WorkflowEditorComponent implements OnInit, AfterViewInit, OnDestroy
       .getRegionStateStream()
       .pipe(untilDestroyed(this))
       .subscribe(region => {
-        const colorMap: Record<string, string> = {
-          ExecutingDependeePortsPhase: "rgba(33,150,243,0.2)",
-          ExecutingNonDependeePortsPhase: "rgba(255,213,79,0.2)",
-          Completed: "rgba(76,175,80,0.2)",
-        };
-        this.paper.getModelById("region-" + region.id).attr("body/fill", colorMap[region.state]);
+        const element = this.paper.getModelById("region-" + region.id);
+        if (element && colorMap[region.state]) {
+          element.attr("body/fill", colorMap[region.state]);
+        }
       });
   }
 

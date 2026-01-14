@@ -103,6 +103,7 @@ object Utils extends LazyLogging {
       case WorkflowAggregatedState.FAILED        => "Failed"
       case WorkflowAggregatedState.KILLED        => "Killed"
       case WorkflowAggregatedState.UNKNOWN       => "Unknown"
+      case WorkflowAggregatedState.COMPLETED_FROM_CACHE => "CompletedFromCache"
       case WorkflowAggregatedState.Unrecognized(unrecognizedValue) =>
         s"Unrecognized($unrecognizedValue)"
     }
@@ -122,6 +123,7 @@ object Utils extends LazyLogging {
       case "killed"        => WorkflowAggregatedState.KILLED
       case "terminated"    => WorkflowAggregatedState.TERMINATED
       case "unknown"       => WorkflowAggregatedState.UNKNOWN
+      case "completedfromcache" => WorkflowAggregatedState.COMPLETED_FROM_CACHE
       case other           => throw new IllegalArgumentException(s"Unrecognized state: $other")
     }
   }
@@ -141,6 +143,7 @@ object Utils extends LazyLogging {
       case WorkflowAggregatedState.COMPLETED     => 3
       case WorkflowAggregatedState.FAILED        => 4
       case WorkflowAggregatedState.KILLED        => 5
+      case WorkflowAggregatedState.COMPLETED_FROM_CACHE => 6
       case other                                 => -1
     }
   }
