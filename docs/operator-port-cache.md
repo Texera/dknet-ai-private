@@ -119,7 +119,7 @@ Entry point: `RegionExecutionCoordinator` constructor branches on `region.cached
    - `numWorkers = 0`
    - `dataProcessingTime = 0`, `controlProcessingTime = 0`, `idleTime = 0`
    - Input/output tuple counts from cached metadata
-   - **UI**: The graph view displays `-` for cached input counts and for cached output ports that were not materialized.
+   - **UI**: The graph view displays `-` for cached input counts and for cached output ports that were not materialized; worker counts show `from cache`.
    - **Note**: Cached stats are synthetic (inputs default to 0; non-materialized outputs may be omitted). Do not use them for cost modeling until we add explicit tagging/filtering in `runtime_statistics`.
 5. **Propagate cached URIs**: Downstream operators receive cached `result_uri` for materialized inputs
 6. **No WorkerAssignmentUpdate**: Cached regions don't send worker assignment events (consistent with numWorkers=0)
@@ -302,6 +302,7 @@ ExecutionCacheService ────→ upsertCachedOutput()     OperatorPortCache
   - Frontend `OperatorState` enum includes `CompletedFromCache`
   - Operator visualization: blue fill color (`#1890ff`) for cached operators in `joint-ui.service.ts`
   - Port metrics display: cached input counts show `-`, and cached output ports without materialization show `-`
+  - Worker count label: cached operators show `from cache` instead of `#workers`
   - Region visualization: blue fill (`rgba(24,144,255,0.3)`) for cached regions in `workflow-editor.component.ts`
   - Region visibility: shared state via `WorkflowActionService.showRegion` ensures correct visibility when regions are created during execution
 
@@ -421,6 +422,7 @@ The cache system integrates with three layers:
 - [x] Add blue fill for cached regions in `workflow-editor.component.ts`
   - Color: `rgba(24,144,255,0.3)` (translucent blue)
 - [x] Show `-` for cached input counts and cached output ports without materialization
+- [x] Replace cached worker count label with `from cache`
 - [x] Fix region visibility with shared state via `WorkflowActionService.showRegion`
   - Ensures regions show correctly when user toggles visibility before execution
 

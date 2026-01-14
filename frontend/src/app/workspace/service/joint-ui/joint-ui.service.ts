@@ -337,11 +337,12 @@ export class JointUIService {
 
     const inputMetrics = statistics.inputPortMetrics;
     const outputMetrics = statistics.outputPortMetrics;
-    // Cached operators show "-" for inputs and non-materialized outputs.
+    // Cached operators show "-" for inputs and non-materialized outputs, and label workers as "from cache".
     const isSkippedFromCache = statistics.operatorState === OperatorState.CompletedFromCache;
 
     const workerCount = statistics.numWorkers ?? 1;
-    element.attr(`.${operatorWorkerCountClass}/text`, "#workers: " + String(workerCount));
+    const workerCountLabel = isSkippedFromCache ? "from cache" : "#workers: " + String(workerCount);
+    element.attr(`.${operatorWorkerCountClass}/text`, workerCountLabel);
 
     element.attr(
       `.${operatorStatusTextClass}/text`,
