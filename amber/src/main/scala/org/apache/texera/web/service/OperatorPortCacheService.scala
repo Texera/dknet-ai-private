@@ -23,9 +23,13 @@ import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, Workflow
 import org.apache.texera.amber.core.workflow.cache.FingerprintUtil
 import org.apache.texera.amber.core.workflow.{CachedOutput, GlobalPortIdentity, PhysicalPlan}
 import org.apache.texera.amber.util.serde.GlobalPortIdentitySerde.SerdeOps
+import org.apache.texera.dao.SqlServer
+import org.apache.texera.dao.jooq.generated.Tables.OPERATOR_PORT_EXECUTIONS
 import org.apache.texera.web.dao.{OperatorPortCacheDao, OperatorPortCacheRecord}
+import org.apache.texera.amber.core.storage.DocumentFactory
 
 import java.net.URI
+import scala.jdk.CollectionConverters._
 
 /**
   * Service for operator port result caching.
@@ -40,6 +44,7 @@ import java.net.URI
   * @param dao OperatorPortCacheDao for database access
   */
 class OperatorPortCacheService(dao: OperatorPortCacheDao) {
+  private val context = SqlServer.getInstance().createDSLContext()
 
   /**
     * Lookup cached outputs for all materializable ports in the physical plan.
@@ -113,16 +118,51 @@ class OperatorPortCacheService(dao: OperatorPortCacheDao) {
   }
 
   /**
-    * Invalidate all cache entries for a workflow.
-    * Useful for:
-    * - Manual cache clearing via REST API
-    * - Workflow deletion (cleanup)
-    * - Testing
+    * Invalidate all cache entries for a workflow and remove associated result artifacts.
+    * This is used for manual cache clearing, workflow deletion, and testing.
+    *
+    * Steps:
+    * 1. Collect cached result URIs
+    * 2. Remove operator_port_executions rows referencing those URIs
+    * 3. Delete cache entries
+    * 4. Clear stored result documents (best-effort)
     *
     * @param workflowId Workflow ID whose cache entries should be deleted
     */
   def invalidateWorkflowCache(workflowId: WorkflowIdentity): Unit = {
+    val cacheEntries = dao.listByWorkflow(workflowId.id, Int.MaxValue, 0)
+    val resultUris = cacheEntries.map(_.resultUri).distinct
+    deleteOperatorPortResultsByUris(resultUris)
     dao.deleteByWorkflow(workflowId.id)
+    clearCachedResultDocuments(resultUris)
+  }
+
+  /**
+    * Deletes operator_port_executions rows that reference the provided result URIs.
+    */
+  private def deleteOperatorPortResultsByUris(resultUris: Seq[URI]): Unit = {
+    if (resultUris.isEmpty) {
+      return
+    }
+    val uriStrings = resultUris.map(_.toString).distinct.asJava
+    context
+      .deleteFrom(OPERATOR_PORT_EXECUTIONS)
+      .where(OPERATOR_PORT_EXECUTIONS.RESULT_URI.in(uriStrings))
+      .execute()
+  }
+
+  /**
+    * Best-effort deletion of stored result documents referenced by cache entries.
+    */
+  private def clearCachedResultDocuments(resultUris: Seq[URI]): Unit = {
+    resultUris.foreach { uri =>
+      try {
+        DocumentFactory.openDocument(uri)._1.clear()
+      } catch {
+        case _: Throwable =>
+        // Document already deleted or unavailable - safe to ignore.
+      }
+    }
   }
 
   /**

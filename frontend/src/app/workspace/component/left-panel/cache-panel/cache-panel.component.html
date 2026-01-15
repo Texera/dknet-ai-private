@@ -27,6 +27,17 @@
       (click)="refresh()">
       Refresh
     </button>
+    <button
+      nz-button
+      nzSize="small"
+      nzType="default"
+      [disabled]="loading || removing || !cacheEntries.length"
+      [nzLoading]="removing"
+      (nzOnConfirm)="clearCacheEntries()"
+      nz-popconfirm
+      nzPopconfirmTitle="Remove all cached results for this workflow?">
+      Clear cache
+    </button>
     <label class="cache-panel__toggle">
       <nz-switch
         nzSize="small"

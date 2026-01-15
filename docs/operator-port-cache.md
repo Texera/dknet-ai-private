@@ -190,6 +190,7 @@ Entry point: `RegionExecutionCoordinator` constructor branches on `region.cached
 - Left panel "Cache" tab listing workflow cache entries (physical op id, port id, tuple count, source execution id, updated_at, short subdag hash)
 - Highlight cache entries usable by the current execution (fingerprint match)
 - Cache panel toggle to show only entries usable by the current execution
+- Cache panel action to clear all cached results (deletes cache entries, result documents, and port result records)
 - Output port labels show tuple counts, plus a second line with source execution id for cached outputs
 - Result URI hidden from the UI
 
@@ -257,7 +258,7 @@ class OperatorPortCacheService(dao: OperatorPortCacheDao) {
       tupleCount: Option[Long]
   ): Unit
 
-  /** Invalidate all cache entries for a workflow (lifecycle management) */
+  /** Invalidate all cache entries and cached result artifacts for a workflow */
   def invalidateWorkflowCache(workflowId: WorkflowIdentity): Unit
 
   /** Future: Cost-aware eviction when storage quota exceeded */
@@ -270,7 +271,7 @@ class OperatorPortCacheService(dao: OperatorPortCacheDao) {
 - Encapsulates fingerprint computation (calls `FingerprintUtil`)
 - Handles `GlobalPortIdentity` ↔ String serialization
 - Manages tuple count propagation (best-effort via runtime stats)
-- Provides workflow-level abstractions (batch lookup, invalidation)
+- Provides workflow-level abstractions (batch lookup, invalidation + artifact cleanup)
 
 #### WorkflowExecutionsResource (REST API - Optional)
 
@@ -279,7 +280,8 @@ class OperatorPortCacheService(dao: OperatorPortCacheDao) {
 HTTP endpoints for external access:
 
 - `GET /executions/{workflowId}/cache?limit=<n>&offset=<n>`: List cache entries (result_uri omitted)
-- (Optional) `DELETE /cache/{workflowId}`: Manual cache invalidation
+- `DELETE /executions/{workflowId}/cache`: Clear all cache entries and delete stored result documents
+- `POST /executions/{workflowId}/cache/clear`: POST alternative for environments that block DELETE
 
 **Note**: Internal services use `OperatorPortCacheService`, not the REST resource.
 
@@ -368,7 +370,8 @@ ExecutionCacheService ────→ upsertCachedOutput()     OperatorPortCache
 - **Cache metadata UI** (Phase 1.3 - Complete):
   - `CacheUsageUpdateEvent` publishes cached outputs usable by the current execution (fingerprint match)
   - Left panel "Cache" tab lists cache entries (physical op id, port id, tuple count, source execution id, updated_at, short subdag hash)
-- Cache entries highlight when usable by the current execution (fingerprint match)
+  - Cache entries highlight when usable by the current execution (fingerprint match)
+  - Cache panel "Clear cache" action removes cached results and associated result artifacts
 - Cache panel can filter to only show entries usable by the current execution
   - Cached output ports show source execution id on a second label line
   - REST: `GET /executions/{wid}/cache` lists cache entries (result URI omitted)

@@ -45,7 +45,11 @@ import org.apache.texera.dao.jooq.generated.tables.pojos.{WorkflowExecutions, Us
 import org.apache.texera.web.dao.OperatorPortCacheDao
 import org.apache.texera.web.model.http.request.result.ResultExportRequest
 import org.apache.texera.web.resource.dashboard.user.workflow.WorkflowExecutionsResource._
-import org.apache.texera.web.service.{ExecutionsMetadataPersistService, ResultExportService}
+import org.apache.texera.web.service.{
+  ExecutionsMetadataPersistService,
+  OperatorPortCacheService,
+  ResultExportService
+}
 import org.jooq.DSLContext
 import play.api.libs.json.Json
 
@@ -816,6 +820,49 @@ class WorkflowExecutionsResource {
       .toList
   }
 
+  /**
+    * Removes all cached outputs for a workflow and deletes their stored result documents.
+    *
+    * This also deletes operator_port_executions rows that reference the cached result URIs.
+    * The cleanup is delegated to OperatorPortCacheService for consistency.
+    */
+  @DELETE
+  @Path("/{wid}/cache")
+  @RolesAllowed(Array("REGULAR", "ADMIN"))
+  def deleteWorkflowCacheEntries(
+      @PathParam("wid") wid: Integer,
+      @Auth sessionUser: SessionUser
+  ): Unit = {
+    clearWorkflowCacheEntriesInternal(wid, sessionUser)
+  }
+
+  /**
+    * Clears cached outputs using POST for environments that block DELETE.
+    */
+  @POST
+  @Path("/{wid}/cache/clear")
+  @RolesAllowed(Array("REGULAR", "ADMIN"))
+  def clearWorkflowCacheEntries(
+      @PathParam("wid") wid: Integer,
+      @Auth sessionUser: SessionUser
+  ): Unit = {
+    clearWorkflowCacheEntriesInternal(wid, sessionUser)
+  }
+
+  /**
+    * Shared handler for cache eviction endpoints.
+    */
+  private def clearWorkflowCacheEntriesInternal(
+      wid: Integer,
+      sessionUser: SessionUser
+  ): Unit = {
+    validateUserCanWriteWorkflow(sessionUser.getUser.getUid, wid)
+
+    val dao = new OperatorPortCacheDao(SqlServer.getInstance())
+    val cacheService = new OperatorPortCacheService(dao)
+    cacheService.invalidateWorkflowCache(WorkflowIdentity(wid.toLong))
+  }
+
   /** Sets a group of executions' bookmarks to the payload passed in the body. */
   @PUT
   @Consumes(Array(MediaType.APPLICATION_JSON))
@@ -848,6 +895,12 @@ class WorkflowExecutionsResource {
   /** Determine if the user is authorized to access the workflow, if not raise 401 */
   private def validateUserCanAccessWorkflow(uid: Integer, wid: Integer): Unit = {
     if (!WorkflowAccessResource.hasReadAccess(wid, uid))
+      throw new WebApplicationException(Response.Status.UNAUTHORIZED)
+  }
+
+  /** Determine if the user is authorized to modify the workflow, if not raise 401. */
+  private def validateUserCanWriteWorkflow(uid: Integer, wid: Integer): Unit = {
+    if (!WorkflowAccessResource.hasWriteAccess(wid, uid))
       throw new WebApplicationException(Response.Status.UNAUTHORIZED)
   }
 

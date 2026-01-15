@@ -40,6 +40,8 @@ export class CachePanelComponent implements OnInit {
   public visibleEntries: WorkflowCacheEntry[] = [];
   /** When true, only cache entries usable by the current execution are shown. */
   public showUsableOnly = false;
+  /** True while the cache eviction request is in flight. */
+  public removing = false;
   public loading = false;
   private workflowId?: number;
   private usageKeys = new Set<string>();
@@ -86,6 +88,28 @@ export class CachePanelComponent implements OnInit {
       )
       .subscribe(entries => {
         this.cacheEntries = entries;
+        this.updateVisibleEntries();
+      });
+  }
+
+  /**
+   * Removes all cached outputs for the workflow and refreshes the list.
+   */
+  public clearCacheEntries(): void {
+    if (!this.workflowId) {
+      return;
+    }
+    this.removing = true;
+    this.workflowExecutionsService
+      .deleteWorkflowCacheEntries(this.workflowId)
+      .pipe(
+        finalize(() => {
+          this.removing = false;
+        }),
+        untilDestroyed(this)
+      )
+      .subscribe(() => {
+        this.cacheEntries = [];
         this.updateVisibleEntries();
       });
   }

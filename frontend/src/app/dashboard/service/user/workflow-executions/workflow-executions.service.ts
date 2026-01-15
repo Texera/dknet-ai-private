@@ -107,4 +107,11 @@ export class WorkflowExecutionsService {
     }
     return this.http.get<WorkflowCacheEntry[]>(`${WORKFLOW_EXECUTIONS_API_BASE_URL}/${wid}/cache`, { params });
   }
+
+  /**
+   * Deletes all cached outputs for the workflow, including stored result artifacts.
+   */
+  deleteWorkflowCacheEntries(wid: number): Observable<void> {
+    return this.http.post<void>(`${WORKFLOW_EXECUTIONS_API_BASE_URL}/${wid}/cache/clear`, {});
+  }
 }
