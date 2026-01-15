@@ -364,6 +364,7 @@ ExecutionCacheService ────→ upsertCachedOutput()     OperatorPortCache
   - Frontend `OperatorState` enum includes `CompletedFromCache`
   - Operator visualization: blue fill color (`#1890ff`) for cached operators in `joint-ui.service.ts`
   - Port metrics display: cached input counts show `-`, and cached output ports without materialization show `-`
+  - Input ports fed by cached sub-operators (e.g., HashJoin build cached, probe executed) report unknown counts and render as `-`
   - Worker count label: cached operators show `from cache` instead of `#workers`
   - Region visualization: blue fill (`rgba(24,144,255,0.3)`) for cached regions in `workflow-editor.component.ts`
   - Region visibility: shared state via `WorkflowActionService.showRegion` ensures correct visibility when regions are created during execution

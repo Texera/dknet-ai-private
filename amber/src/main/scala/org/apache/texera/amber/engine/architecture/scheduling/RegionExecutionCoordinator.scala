@@ -146,7 +146,8 @@ class RegionExecutionCoordinator(
         }
         .toSeq
       val inputMetrics = op.inputPorts.keys
-        .map(pid => PortTupleMetricsMapping(pid, TupleMetrics(0L, 0L)))
+        // Use -1 to signal skipped/unknown input counts for cached operators.
+        .map(pid => PortTupleMetricsMapping(pid, TupleMetrics(-1L, -1L)))
         .toSeq
       val stats = OperatorMetrics(
         WorkflowAggregatedState.COMPLETED_FROM_CACHE,

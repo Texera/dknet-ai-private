@@ -82,6 +82,21 @@ object ExecutionUtils {
     )
   }
 
+  /**
+    * Aggregates execution states into a workflow-level state.
+    *
+    * Priority rules:
+    * - Empty => UNINITIALIZED
+    * - All completed or all terminated => COMPLETED
+    * - All cached (if provided) => COMPLETED_FROM_CACHE
+    * - Any running => RUNNING
+    * - Otherwise, strip terminal states (completed/terminated/cached):
+    *   - None left => COMPLETED (mixed terminal states)
+    *   - All uninitialized => UNINITIALIZED
+    *   - All paused => PAUSED
+    *   - All ready => RUNNING
+    *   - Else => UNKNOWN
+    */
   def aggregateStates[T](
       states: Iterable[T],
       completedState: T,
@@ -103,7 +118,9 @@ object ExecutionUtils {
         val terminalStates =
           Set(completedState, terminatedState) ++ cachedState.toSet
         val unCompletedStates = states.filterNot(terminalStates.contains)
-        if (unCompletedStates.forall(_ == uninitializedState)) {
+        if (unCompletedStates.isEmpty) {
+          WorkflowAggregatedState.COMPLETED
+        } else if (unCompletedStates.forall(_ == uninitializedState)) {
           WorkflowAggregatedState.UNINITIALIZED
         } else if (unCompletedStates.forall(_ == pausedState)) {
           WorkflowAggregatedState.PAUSED
@@ -115,6 +132,12 @@ object ExecutionUtils {
     }
   }
 
+  /**
+    * Aggregates tuple metrics per port, preserving unknown markers for cached inputs.
+    *
+    * A negative count/size indicates an unknown value (e.g., cached input ports),
+    * so any unknown value keeps the aggregated port metrics unknown.
+    */
   def aggregatePortMetrics(
       metrics: Iterable[PortTupleMetricsMapping]
   ): Seq[PortTupleMetricsMapping] = {
@@ -123,8 +146,12 @@ object ExecutionUtils {
       .view
       .map {
         case (portId, mappings) =>
-          val totalCount = mappings.map(_.tupleMetrics.count).sum
-          val totalSize = mappings.map(_.tupleMetrics.size).sum
+          val hasUnknown =
+            mappings.exists(m => m.tupleMetrics.count < 0 || m.tupleMetrics.size < 0)
+          val totalCount =
+            if (hasUnknown) -1L else mappings.map(_.tupleMetrics.count).sum
+          val totalSize =
+            if (hasUnknown) -1L else mappings.map(_.tupleMetrics.size).sum
           PortTupleMetricsMapping(portId, TupleMetrics(totalCount, totalSize))
       }
       .toSeq

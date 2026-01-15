@@ -388,7 +388,9 @@ export class JointUIService {
           originalName = portId;
         }
 
-        const labelText = isSkippedFromCache ? "-" : String(count ?? 0);
+        // Negative counts mark skipped/unknown inputs from cached sub-operators.
+        const isUnknownCount = count !== undefined && count < 0;
+        const labelText = isSkippedFromCache || isUnknownCount ? "-" : String(count ?? 0);
         element.portProp(portId, "attrs/.port-label/text", labelText);
       }
     });
