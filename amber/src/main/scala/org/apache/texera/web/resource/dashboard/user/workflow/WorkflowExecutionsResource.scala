@@ -33,6 +33,7 @@ import org.apache.texera.amber.engine.architecture.logreplay.{ReplayDestination,
 import org.apache.texera.amber.engine.common.Utils.{maptoStatusCode, stringToAggregatedState}
 import org.apache.texera.amber.engine.common.storage.SequentialRecordStorage
 import org.apache.texera.amber.util.JSONUtils.objectMapper
+import org.apache.texera.amber.util.serde.GlobalPortIdentitySerde
 import org.apache.texera.amber.util.serde.GlobalPortIdentitySerde.SerdeOps
 import org.apache.texera.auth.{JwtParser, SessionUser}
 import org.apache.texera.dao.SqlServer
@@ -41,6 +42,7 @@ import org.apache.texera.dao.jooq.generated.Tables._
 import org.apache.texera.dao.jooq.generated.enums.UserRoleEnum
 import org.apache.texera.dao.jooq.generated.tables.daos.WorkflowExecutionsDao
 import org.apache.texera.dao.jooq.generated.tables.pojos.{WorkflowExecutions, User => UserPojo}
+import org.apache.texera.web.dao.OperatorPortCacheDao
 import org.apache.texera.web.model.http.request.result.ResultExportRequest
 import org.apache.texera.web.resource.dashboard.user.workflow.WorkflowExecutionsResource._
 import org.apache.texera.web.service.{ExecutionsMetadataPersistService, ResultExportService}
@@ -555,6 +557,23 @@ object WorkflowExecutionsResource {
       numWorkers: Int,
       status: Int
   )
+
+  /**
+    * Cache entry metadata returned for a workflow.
+    *
+    * result_uri is intentionally omitted from the payload.
+    */
+  case class WorkflowCacheEntry(
+      globalPortId: String,
+      logicalOpId: String,
+      layerName: String,
+      portId: Int,
+      internal: Boolean,
+      subdagHash: String,
+      tupleCount: Option[Long],
+      sourceExecutionId: Option[Long],
+      updatedAt: Timestamp
+  )
 }
 
 case class ExecutionGroupBookmarkRequest(
@@ -746,6 +765,54 @@ class WorkflowExecutionsResource {
           status = record.getField(10).asInstanceOf[Int]
         )
       })
+      .toList
+  }
+
+  /**
+    * Returns cache entries for a workflow, ordered by most recent update.
+    *
+    * @param wid workflow ID
+    * @param sessionUser authenticated user
+    * @param limit max number of entries to return (optional; defaults to all)
+    * @param offset pagination offset (optional)
+    */
+  @GET
+  @Produces(Array(MediaType.APPLICATION_JSON))
+  @Path("/{wid}/cache")
+  @RolesAllowed(Array("REGULAR", "ADMIN"))
+  def retrieveWorkflowCacheEntries(
+      @PathParam("wid") wid: Integer,
+      @Auth sessionUser: SessionUser,
+      @QueryParam("limit") limit: Integer,
+      @QueryParam("offset") offset: Integer
+  ): List[WorkflowCacheEntry] = {
+    validateUserCanAccessWorkflow(sessionUser.getUser.getUid, wid)
+
+    val effectiveLimit =
+      Option(limit).map(_.toInt).filter(_ > 0).getOrElse(Int.MaxValue)
+    val effectiveOffset =
+      Option(offset).map(_.toInt).filter(_ >= 0).getOrElse(0)
+
+    val dao = new OperatorPortCacheDao(SqlServer.getInstance())
+    dao
+      .listByWorkflow(wid.toLong, effectiveLimit, effectiveOffset)
+      .map { record =>
+        val globalPortId =
+          GlobalPortIdentitySerde.deserializeFromString(record.globalPortId)
+        WorkflowCacheEntry(
+          globalPortId = record.globalPortId,
+          logicalOpId = globalPortId.opId.logicalOpId.id,
+          layerName = globalPortId.opId.layerName,
+          portId = globalPortId.portId.id,
+          internal = globalPortId.portId.internal,
+          subdagHash = record.subdagHash,
+          tupleCount = record.tupleCount,
+          sourceExecutionId = record.sourceExecutionId,
+          updatedAt = record.updatedAt
+            .map(odt => Timestamp.from(odt.toInstant))
+            .getOrElse(new Timestamp(0L))
+        )
+      }
       .toList
   }
 

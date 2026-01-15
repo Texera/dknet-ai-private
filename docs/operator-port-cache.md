@@ -158,6 +158,17 @@ Entry point: `RegionExecutionCoordinator` constructor branches on `region.cached
 - No `from_cache` flag required (can infer from numWorkers=0 + instant completion)
 - Lifecycle management (eviction, cleanup) deferred to future work
 
+**Cache metadata UI (Implemented)**:
+- Left panel "Cache" tab listing workflow cache entries (physical op id, port id, tuple count, source execution id, updated_at, short subdag hash)
+- Highlight cache entries matched for the current execution fingerprint
+- Output port labels show tuple counts, plus a second line with source execution id for cached outputs
+- Result URI hidden from the UI
+
+**Cache usage updates**:
+- `CacheUsageUpdateEvent` publishes matched cached outputs at submission time
+- Frontend uses the event to drive cache entry highlighting and per-port cache labels
+- Cache usage snapshots are re-emitted on websocket connect to keep labels visible after refresh
+
 ### 5. Service & DAO Architecture
 
 #### OperatorPortCacheDao
@@ -176,6 +187,13 @@ class OperatorPortCacheDao(sqlServer: SqlServer) {
 
   /** Upsert cache entry (insert or update on conflict) */
   def upsert(record: OperatorPortCacheRecord): Unit
+
+  /** List cache entries for a workflow (ordered by updated_at desc) */
+  def listByWorkflow(
+      workflowId: Long,
+      limit: Int,
+      offset: Int
+  ): Seq[OperatorPortCacheRecord]
 
   /** Delete all cache entries for a workflow */
   def deleteByWorkflow(workflowId: Long): Unit
@@ -222,9 +240,9 @@ class OperatorPortCacheService(dao: OperatorPortCacheDao) {
 #### WorkflowExecutionsResource (REST API - Optional)
 **Location**: `/amber/src/main/scala/org/apache/texera/web/resource/dashboard/user/workflow/WorkflowExecutionsResource.scala`
 
-HTTP endpoints for external access (if needed):
-- `GET /cache/{workflowId}/{portId}/{hash}`: Manual cache lookup
-- `DELETE /cache/{workflowId}`: Manual cache invalidation
+HTTP endpoints for external access:
+- `GET /executions/{workflowId}/cache?limit=<n>&offset=<n>`: List cache entries (result_uri omitted)
+- (Optional) `DELETE /cache/{workflowId}`: Manual cache invalidation
 
 **Note**: Internal services use `OperatorPortCacheService`, not the REST resource.
 
@@ -234,7 +252,7 @@ Phase 1.1 Service/DAO architecture is complete. Key components:
 
 | Component | Location | Purpose |
 |-----------|----------|---------|
-| **OperatorPortCacheDao** | `/amber/src/main/scala/org/apache/texera/web/dao/OperatorPortCacheDao.scala` | Low-level database access using Jooq. Methods: `get()`, `upsert()`, `deleteByWorkflow()` |
+| **OperatorPortCacheDao** | `/amber/src/main/scala/org/apache/texera/web/dao/OperatorPortCacheDao.scala` | Low-level database access using Jooq. Methods: `get()`, `upsert()`, `listByWorkflow()`, `deleteByWorkflow()` |
 | **OperatorPortCacheService** | `/amber/src/main/scala/org/apache/texera/web/service/OperatorPortCacheService.scala` | High-level cache operations. Methods: `lookupCachedOutputs()`, `upsertCachedOutput()`, `invalidateWorkflowCache()` |
 | **ExecutionCacheService** | `/amber/src/main/scala/org/apache/texera/web/service/ExecutionCacheService.scala` | Event listener that registers callback for `PortMaterialized` events and bridges to service layer |
 | **PortMaterialized Event** | `/amber/src/main/scala/org/apache/texera/amber/engine/architecture/controller/ClientEvent.scala` | Client event emitted when output port completes with URI and tuple count |
@@ -282,7 +300,7 @@ ExecutionCacheService ────→ upsertCachedOutput()     OperatorPortCache
   - Columns: `workflow_id`, `global_port_id`, `subdag_hash` (PK), `fingerprint_json`, `result_uri`, `tuple_count`, `source_execution_id`, `updated_at`
   - Timestamp managed by database (`DEFAULT now()`)
 - **Service/DAO architecture** (Phase 1.1 - Complete):
-  - `OperatorPortCacheDao`: Low-level database access with get/upsert/delete methods
+  - `OperatorPortCacheDao`: Low-level database access with get/upsert/listByWorkflow/delete methods
   - `OperatorPortCacheService`: High-level cache operations (lookupCachedOutputs, upsertCachedOutput, invalidateWorkflowCache)
   - `ExecutionCacheService`: Event listener bridging controller events to service layer
   - Event-based communication via `PortMaterialized` event and `client.registerCallback[T]`
@@ -305,6 +323,13 @@ ExecutionCacheService ────→ upsertCachedOutput()     OperatorPortCache
   - Worker count label: cached operators show `from cache` instead of `#workers`
   - Region visualization: blue fill (`rgba(24,144,255,0.3)`) for cached regions in `workflow-editor.component.ts`
   - Region visibility: shared state via `WorkflowActionService.showRegion` ensures correct visibility when regions are created during execution
+- **Cache metadata UI** (Phase 1.3 - Complete):
+  - `CacheUsageUpdateEvent` publishes matched cached outputs for the current execution
+  - Left panel "Cache" tab lists cache entries (physical op id, port id, tuple count, source execution id, updated_at, short subdag hash)
+  - Cache entries highlight when they match the current workflow fingerprint
+  - Cached output ports show source execution id on a second label line
+  - REST: `GET /executions/{wid}/cache` lists cache entries (result URI omitted)
+  - Result URI omitted from UI payloads
 
 ### Architecture Integration
 The cache system integrates with three layers:
@@ -401,7 +426,7 @@ The cache system integrates with three layers:
   - `cacheService` created at workflow level
   - `executionCacheService` created per execution
 - [ ] Add unit tests for DAO operations
-- [ ] (Optional) Add REST endpoints in `WorkflowExecutionsResource` that delegate to service
+- [x] Add cache listing endpoint in `WorkflowExecutionsResource` (`GET /executions/{wid}/cache`)
 
 #### 1.2 Frontend Cache Visualization ✓ COMPLETE
 - [x] Add `COMPLETED_FROM_CACHE` state to `WorkflowAggregatedState` protobuf enum
@@ -426,7 +451,14 @@ The cache system integrates with three layers:
 - [x] Fix region visibility with shared state via `WorkflowActionService.showRegion`
   - Ensures regions show correctly when user toggles visibility before execution
 
-#### 1.3 Testing & Validation
+#### 1.3 Cache Metadata UI ✓ COMPLETE
+- [x] Add left panel "Cache" tab listing workflow cache entries (physical op id, port id, tuple count, source execution id, updated_at, short subdag hash)
+- [x] Highlight cache entries matched for the current execution fingerprint
+- [x] Show per-output-port sourceExecutionId on a second output port label line
+- [x] Re-emit cache usage snapshots on websocket connect to refresh cache labels after reload
+- [x] Keep result URI hidden in the UI
+
+#### 1.4 Testing & Validation
 - [ ] Verify downstream cached URI consumption across all operator types
 - [ ] Add integration tests: cache upsert → DB verification
 - [ ] Add E2E tests: run → cache → rerun → verify skip

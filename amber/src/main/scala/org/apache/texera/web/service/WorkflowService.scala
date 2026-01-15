@@ -50,7 +50,7 @@ import org.apache.texera.amber.error.ErrorUtils.{
 }
 import org.apache.texera.dao.jooq.generated.tables.pojos.User
 import org.apache.texera.service.util.LargeBinaryManager
-import org.apache.texera.web.model.websocket.event.TexeraWebSocketEvent
+import org.apache.texera.web.model.websocket.event.{CacheUsageUpdateEvent, TexeraWebSocketEvent}
 import org.apache.texera.web.model.websocket.request.WorkflowExecuteRequest
 import org.apache.texera.web.resource.dashboard.user.workflow.WorkflowExecutionsResource
 import org.apache.texera.web.service.WorkflowService.mkWorkflowStateId
@@ -160,6 +160,10 @@ class WorkflowService(
     new CompositeDisposable(subscriptions :+ errorSubscription: _*)
   }
 
+  /**
+    * Subscribes to execution-scoped websocket events and emits cache usage snapshots
+    * so refreshed sessions can rehydrate cached output labels.
+    */
   def connectToExecution(onNext: TexeraWebSocketEvent => Unit): Disposable = {
     val localDisposable = new CompositeDisposable()
     val disposable = executionService.subscribe { execService: WorkflowExecutionService =>
@@ -171,9 +175,21 @@ class WorkflowService(
         )
         .toSeq
       localDisposable.addAll(subscriptions: _*)
+      emitCacheUsageSnapshot(execService, onNext)
     }
     // Note: this new CompositeDisposable is necessary. DO NOT OPTIMIZE.
     new CompositeDisposable(localDisposable, disposable)
+  }
+
+  /**
+    * Sends the latest cache usage metadata for the current execution to a new subscriber.
+    */
+  private def emitCacheUsageSnapshot(
+      execService: WorkflowExecutionService,
+      onNext: TexeraWebSocketEvent => Unit
+  ): Unit = {
+    val cachedOutputs = execService.executionStateStore.cacheUsageStore.getState.cachedOutputs
+    onNext(CacheUsageUpdateEvent(cachedOutputs))
   }
 
   def disconnect(): Unit = {

@@ -24,6 +24,8 @@ import org.apache.texera.dao.jooq.generated.Tables.OPERATOR_PORT_CACHE
 import org.jooq.DSLContext
 
 import java.net.URI
+import java.time.OffsetDateTime
+import scala.jdk.CollectionConverters._
 import scala.jdk.OptionConverters._
 
 /**
@@ -36,6 +38,8 @@ import scala.jdk.OptionConverters._
   * @param resultUri URI of the materialized output
   * @param tupleCount Number of tuples in the cached output (optional)
   * @param sourceExecutionId Execution ID that produced this cache entry (optional)
+  * @param updatedAt Last update timestamp for this cache entry (optional; DB-managed).
+  *                  Uses OffsetDateTime to align with Jooq's TIMESTAMPTZ mapping.
   *
   * Note: updated_at timestamp is managed by the database (DEFAULT now())
   */
@@ -46,7 +50,8 @@ case class OperatorPortCacheRecord(
     fingerprintJson: String,
     resultUri: URI,
     tupleCount: Option[Long],
-    sourceExecutionId: Option[Long]
+    sourceExecutionId: Option[Long],
+    updatedAt: Option[OffsetDateTime] = None
 )
 
 /**
@@ -79,7 +84,8 @@ class OperatorPortCacheDao(sqlServer: SqlServer) {
         OPERATOR_PORT_CACHE.FINGERPRINT_JSON,
         OPERATOR_PORT_CACHE.RESULT_URI,
         OPERATOR_PORT_CACHE.TUPLE_COUNT,
-        OPERATOR_PORT_CACHE.SOURCE_EXECUTION_ID
+        OPERATOR_PORT_CACHE.SOURCE_EXECUTION_ID,
+        OPERATOR_PORT_CACHE.UPDATED_AT
       )
       .from(OPERATOR_PORT_CACHE)
       .where(OPERATOR_PORT_CACHE.WORKFLOW_ID.eq(workflowId.toInt))
@@ -95,9 +101,56 @@ class OperatorPortCacheDao(sqlServer: SqlServer) {
           fingerprintJson = record.value4(),
           resultUri = URI.create(record.value5()),
           tupleCount = Option(record.value6()).map(_.longValue()),
-          sourceExecutionId = Option(record.value7()).map(_.longValue())
+          sourceExecutionId = Option(record.value7()).map(_.longValue()),
+          updatedAt = Option(record.value8())
         )
       }
+  }
+
+  /**
+    * List cache entries for a workflow, ordered by most recent update.
+    *
+    * @param workflowId Workflow ID to list cache entries for
+    * @param limit Max number of entries to return
+    * @param offset Offset into the result set for pagination
+    * @return Cache entries ordered by updated_at descending
+    */
+  def listByWorkflow(
+      workflowId: Long,
+      limit: Int,
+      offset: Int
+  ): Seq[OperatorPortCacheRecord] = {
+    context
+      .select(
+        OPERATOR_PORT_CACHE.WORKFLOW_ID,
+        OPERATOR_PORT_CACHE.GLOBAL_PORT_ID,
+        OPERATOR_PORT_CACHE.SUBDAG_HASH,
+        OPERATOR_PORT_CACHE.FINGERPRINT_JSON,
+        OPERATOR_PORT_CACHE.RESULT_URI,
+        OPERATOR_PORT_CACHE.TUPLE_COUNT,
+        OPERATOR_PORT_CACHE.SOURCE_EXECUTION_ID,
+        OPERATOR_PORT_CACHE.UPDATED_AT
+      )
+      .from(OPERATOR_PORT_CACHE)
+      .where(OPERATOR_PORT_CACHE.WORKFLOW_ID.eq(workflowId.toInt))
+      .orderBy(OPERATOR_PORT_CACHE.UPDATED_AT.desc())
+      .limit(limit)
+      .offset(offset)
+      .fetch()
+      .asScala
+      .map(record =>
+        OperatorPortCacheRecord(
+          workflowId = record.value1().longValue(),
+          globalPortId = record.value2(),
+          subdagHash = record.value3(),
+          fingerprintJson = record.value4(),
+          resultUri = URI.create(record.value5()),
+          tupleCount = Option(record.value6()).map(_.longValue()),
+          sourceExecutionId = Option(record.value7()).map(_.longValue()),
+          updatedAt = Option(record.value8())
+        )
+      )
+      .toSeq
   }
 
   /**

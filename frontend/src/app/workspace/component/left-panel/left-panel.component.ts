@@ -23,6 +23,7 @@ import { NzResizeEvent } from "ng-zorro-antd/resizable";
 import { CdkDragDrop, moveItemInArray } from "@angular/cdk/drag-drop";
 import { OperatorMenuComponent } from "./operator-menu/operator-menu.component";
 import { VersionsListComponent } from "./versions-list/versions-list.component";
+import { CachePanelComponent } from "./cache-panel/cache-panel.component";
 import { WorkflowExecutionHistoryComponent } from "../../../dashboard/component/user/user-workflow/ngbd-modal-workflow-executions/workflow-execution-history.component";
 import { TimeTravelComponent } from "./time-travel/time-travel.component";
 import { SettingsComponent } from "./settings/settings.component";
@@ -52,6 +53,7 @@ export class LeftPanelComponent implements OnDestroy, OnInit, AfterViewInit {
     { component: null, title: "", icon: "", enabled: true },
     { component: OperatorMenuComponent, title: "Operators", icon: "appstore", enabled: true },
     { component: VersionsListComponent, title: "Versions", icon: "schedule", enabled: true },
+    { component: CachePanelComponent, title: "Cache", icon: "database", enabled: true },
     {
       component: SettingsComponent,
       title: "Settings",
@@ -100,9 +102,12 @@ export class LeftPanelComponent implements OnDestroy, OnInit, AfterViewInit {
     this.height = Number(localStorage.getItem("left-panel-height")) || this.height;
   }
 
+  /**
+   * Applies feature flags to left panel items that are conditionally enabled.
+   */
   private updateItemsWithConfig(): void {
-    this.items[4].enabled = this.config.env.workflowExecutionsTrackingEnabled; // Execution History
-    this.items[5].enabled = this.config.env.timetravelEnabled; // Time Travel
+    this.items[5].enabled = this.config.env.workflowExecutionsTrackingEnabled; // Execution History
+    this.items[6].enabled = this.config.env.timetravelEnabled; // Time Travel
   }
 
   ngOnInit(): void {

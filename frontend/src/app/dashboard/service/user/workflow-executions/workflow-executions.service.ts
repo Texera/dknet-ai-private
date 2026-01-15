@@ -22,6 +22,7 @@ import { Observable } from "rxjs";
 import { AppSettings } from "../../../../common/app-setting";
 import { HttpClient, HttpParams } from "@angular/common/http";
 import { WorkflowExecutionsEntry } from "../../../type/workflow-executions-entry";
+import { WorkflowCacheEntry } from "../../../type/workflow-cache-entry";
 import { WorkflowRuntimeStatistics } from "../../../type/workflow-runtime-statistics";
 import { ExecutionState } from "../../../../workspace/types/execute-workflow.interface";
 
@@ -90,5 +91,20 @@ export class WorkflowExecutionsService {
     return this.http.get<WorkflowRuntimeStatistics[]>(`${WORKFLOW_EXECUTIONS_API_BASE_URL}/${wid}/stats/${eId}`, {
       params,
     });
+  }
+
+  /**
+   * Retrieves cache entries for the workflow, ordered by most recent update.
+   * Limit and offset are optional; omit to fetch all entries.
+   */
+  retrieveWorkflowCacheEntries(wid: number, limit?: number, offset?: number): Observable<WorkflowCacheEntry[]> {
+    let params = new HttpParams();
+    if (limit !== undefined) {
+      params = params.set("limit", limit.toString());
+    }
+    if (offset !== undefined) {
+      params = params.set("offset", offset.toString());
+    }
+    return this.http.get<WorkflowCacheEntry[]>(`${WORKFLOW_EXECUTIONS_API_BASE_URL}/${wid}/cache`, { params });
   }
 }

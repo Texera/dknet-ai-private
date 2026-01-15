@@ -141,6 +141,22 @@ export interface CacheStatusUpdateEvent
     cacheStatusMap: Record<string, OperatorResultCacheStatus>;
   }> {}
 
+export type CachedPortUsage = Readonly<{
+  globalPortId: string;
+  logicalOpId: string;
+  layerName: string;
+  portId: number;
+  internal: boolean;
+  subdagHash: string;
+  tupleCount?: number;
+  sourceExecutionId?: number;
+}>;
+
+export interface CacheUsageUpdateEvent
+  extends Readonly<{
+    cachedOutputs: ReadonlyArray<CachedPortUsage>;
+  }> {}
+
 export type PythonExpressionEvaluateRequest = Readonly<{
   expression: string;
   operatorId: string;
@@ -235,6 +251,7 @@ export type TexeraWebsocketEventTypeMap = {
   ResultExportResponse: ResultExportResponse;
   WorkflowAvailableResultEvent: WorkflowAvailableResultEvent;
   CacheStatusUpdateEvent: CacheStatusUpdateEvent;
+  CacheUsageUpdateEvent: CacheUsageUpdateEvent;
   PythonExpressionEvaluateResponse: PythonExpressionEvaluateResponse;
   WorkerAssignmentUpdateEvent: WorkerAssignmentUpdateEvent;
   ModifyLogicResponse: ModifyLogicResponse;

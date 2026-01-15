@@ -1,0 +1,85 @@
+<!--
+ Licensed to the Apache Software Foundation (ASF) under one
+ or more contributor license agreements.  See the NOTICE file
+ distributed with this work for additional information
+ regarding copyright ownership.  The ASF licenses this file
+ to you under the Apache License, Version 2.0 (the
+ "License"); you may not use this file except in compliance
+ with the License.  You may obtain a copy of the License at
+
+   http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing,
+ software distributed under the License is distributed on an
+ "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ KIND, either express or implied.  See the License for the
+ specific language governing permissions and limitations
+ under the License.
+-->
+
+<div class="cache-panel">
+  <div class="cache-panel__actions">
+    <button
+      nz-button
+      nzSize="small"
+      nzType="default"
+      [disabled]="loading"
+      (click)="refresh()">
+      Refresh
+    </button>
+    <span
+      class="cache-panel__count"
+      *ngIf="cacheEntries.length">
+      {{ cacheEntries.length }} entries
+    </span>
+  </div>
+
+  <nz-table
+    nzSize="small"
+    [nzSimple]="true"
+    [nzFrontPagination]="false"
+    nzTableLayout="auto"
+    [nzLoading]="loading"
+    *ngIf="loading || cacheEntries.length"
+    [nzData]="cacheEntries">
+    <thead>
+      <tr>
+        <th>Port</th>
+        <th>Cache Info</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr
+        *ngFor="let entry of cacheEntries"
+        [class.cache-match]="isMatched(entry)">
+        <td>
+          <div class="cache-port">
+            <div class="cache-port__op">{{ entry.logicalOpId }}</div>
+            <div class="cache-port__layer">{{ entry.layerName }}</div>
+            <div class="cache-port__id">
+              port {{ entry.portId }}<span *ngIf="entry.internal"> (internal)</span>
+            </div>
+          </div>
+        </td>
+        <td>
+          <div class="cache-meta">
+            <nz-tag
+              *ngIf="isMatched(entry)"
+              nzColor="blue">
+              Matched
+            </nz-tag>
+            <div>source execution: {{ formatSourceExecutionId(entry.sourceExecutionId) }}</div>
+            <div>tuples: {{ formatTupleCount(entry.tupleCount) }}</div>
+            <div>updated: {{ entry.updatedAt ? (entry.updatedAt | date:'short') : '-' }}</div>
+            <div>hash: {{ shortenSubdagHash(entry.subdagHash) }}</div>
+          </div>
+        </td>
+      </tr>
+    </tbody>
+  </nz-table>
+
+  <nz-empty
+    *ngIf="!loading && !cacheEntries.length"
+    nzNotFoundContent="No cache entries">
+  </nz-empty>
+</div>

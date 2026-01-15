@@ -1,0 +1,37 @@
+.cache-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.cache-panel__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cache-panel__count {
+  color: #666;
+  font-size: 12px;
+}
+
+.cache-port__op {
+  font-weight: 600;
+}
+
+.cache-port__layer,
+.cache-port__id {
+  color: #666;
+  font-size: 12px;
+}
+
+.cache-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12px;
+}
+
+tr.cache-match {
+  background-color: rgba(24, 144, 255, 0.08);
+}

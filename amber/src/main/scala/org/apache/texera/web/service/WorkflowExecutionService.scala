@@ -29,15 +29,18 @@ import org.apache.texera.amber.engine.common.Utils
 import org.apache.texera.amber.engine.common.client.AmberClient
 import org.apache.texera.amber.engine.common.executionruntimestate.ExecutionMetadataStore
 import org.apache.texera.amber.core.workflow.{CachedOutput, GlobalPortIdentity}
+import org.apache.texera.amber.core.workflow.cache.FingerprintUtil
 import org.apache.texera.amber.util.serde.GlobalPortIdentitySerde.SerdeOps
 import org.apache.texera.web.model.websocket.event.{
+  CacheUsageUpdateEvent,
+  CachedPortUsage,
   TexeraWebSocketEvent,
   WorkflowErrorEvent,
   WorkflowStateEvent
 }
 import org.apache.texera.web.model.websocket.request.WorkflowExecuteRequest
 import org.apache.texera.web.resource.dashboard.user.workflow.WorkflowExecutionsResource
-import org.apache.texera.web.storage.ExecutionStateStore
+import org.apache.texera.web.storage.{ExecutionCacheUsageStore, ExecutionStateStore}
 import org.apache.texera.web.storage.ExecutionStateStore.updateWorkflowState
 import org.apache.texera.web.{ComputingUnitMaster, SubscriptionManager, WebsocketInput}
 import org.apache.texera.workflow.WorkflowCompiler
@@ -87,6 +90,11 @@ class WorkflowExecutionService(
       outputEvents
     })
   )
+  addSubscription(
+    executionStateStore.cacheUsageStore.registerDiffHandler((_, newState) => {
+      Iterable(CacheUsageUpdateEvent(newState.cachedOutputs))
+    })
+  )
 
   private def createStateEvent(state: ExecutionMetadataStore): WorkflowStateEvent = {
     if (state.isRecovering && state.state != COMPLETED) {
@@ -107,21 +115,61 @@ class WorkflowExecutionService(
   var executionConsoleService: ExecutionConsoleService = _
   var executionCacheService: ExecutionCacheService = _
 
+  /**
+    * Lookup cached outputs for the physical plan and return them keyed by GlobalPortIdentity.
+    *
+    * This is used both for workflow settings (serialized key map) and for cache
+    * metadata updates sent to the UI.
+    */
   private def computeCachedOutputs(
       physicalPlan: org.apache.texera.amber.core.workflow.PhysicalPlan
-  ): Map[String, CachedOutput] = {
-    cacheService
-      .lookupCachedOutputs(workflowContext.workflowId, physicalPlan)
-      .map { case (gpid, cached) => gpid.serializeAsString -> cached }
+  ): Map[GlobalPortIdentity, CachedOutput] = {
+    cacheService.lookupCachedOutputs(workflowContext.workflowId, physicalPlan)
   }
 
+  /**
+    * Build cache usage metadata for the current execution from matched cached outputs.
+    */
+  private def buildCacheUsageEntries(
+      physicalPlan: org.apache.texera.amber.core.workflow.PhysicalPlan,
+      cachedOutputs: Map[GlobalPortIdentity, CachedOutput]
+  ): List[CachedPortUsage] = {
+    cachedOutputs.toList
+      .map {
+        case (gpid, cached) =>
+          val fingerprint = FingerprintUtil.computeSubdagFingerprint(physicalPlan, gpid)
+          CachedPortUsage(
+            globalPortId = gpid.serializeAsString,
+            logicalOpId = gpid.opId.logicalOpId.id,
+            layerName = gpid.opId.layerName,
+            portId = gpid.portId.id,
+            internal = gpid.portId.internal,
+            subdagHash = fingerprint.subdagHash,
+            tupleCount = cached.tupleCount,
+            sourceExecutionId = cached.sourceExecutionId.map(_.id)
+          )
+      }
+      .sortBy(entry => (entry.logicalOpId, entry.layerName, entry.portId))
+  }
+
+  /**
+    * Compiles the workflow, prepares cache metadata, initializes execution services, and starts execution.
+    */
   def executeWorkflow(): Unit = {
     try {
       workflow = new WorkflowCompiler(workflowContext)
         .compile(request.logicalPlan)
-      val cachedOutputs = computeCachedOutputs(workflow.physicalPlan)
+      val cachedOutputsByPort = computeCachedOutputs(workflow.physicalPlan)
+      val cachedOutputs = cachedOutputsByPort.map { case (gpid, cached) =>
+        gpid.serializeAsString -> cached
+      }
       workflowContext.workflowSettings =
         workflowContext.workflowSettings.copy(cachedOutputs = cachedOutputs)
+      val cacheUsageEntries =
+        buildCacheUsageEntries(workflow.physicalPlan, cachedOutputsByPort)
+      executionStateStore.cacheUsageStore.updateState(_ =>
+        ExecutionCacheUsageStore(cacheUsageEntries)
+      )
     } catch {
       case err: Throwable =>
         errorHandler(err)
