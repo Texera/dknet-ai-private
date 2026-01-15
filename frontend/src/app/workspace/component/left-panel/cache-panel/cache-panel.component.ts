@@ -36,6 +36,10 @@ import { CacheUsageService } from "../../../service/workflow-status/cache-usage.
 })
 export class CachePanelComponent implements OnInit {
   public cacheEntries: WorkflowCacheEntry[] = [];
+  /** Entries shown in the table after applying the usable-only toggle. */
+  public visibleEntries: WorkflowCacheEntry[] = [];
+  /** When true, only cache entries usable by the current execution are shown. */
+  public showUsableOnly = false;
   public loading = false;
   private workflowId?: number;
   private usageKeys = new Set<string>();
@@ -60,6 +64,7 @@ export class CachePanelComponent implements OnInit {
         this.usageKeys = new Set(
           entries.map(entry => this.cacheUsageService.buildUsageKey(entry.globalPortId, entry.subdagHash))
         );
+        this.updateVisibleEntries();
       });
   }
 
@@ -81,14 +86,25 @@ export class CachePanelComponent implements OnInit {
       )
       .subscribe(entries => {
         this.cacheEntries = entries;
+        this.updateVisibleEntries();
       });
   }
 
   /**
-   * Returns true when a cache entry matches the current execution fingerprint.
+   * Returns true when a cache entry is usable by the current execution (fingerprint match),
+   * regardless of whether the scheduler chooses to reuse it.
    */
-  public isMatched(entry: WorkflowCacheEntry): boolean {
+  public isUsableForExecution(entry: WorkflowCacheEntry): boolean {
     return this.usageKeys.has(this.cacheUsageService.buildUsageKey(entry.globalPortId, entry.subdagHash));
+  }
+
+  /**
+   * Updates the entries shown in the table based on the usable-only toggle.
+   */
+  public updateVisibleEntries(): void {
+    this.visibleEntries = this.showUsableOnly
+      ? this.cacheEntries.filter(entry => this.isUsableForExecution(entry))
+      : this.cacheEntries;
   }
 
   /**

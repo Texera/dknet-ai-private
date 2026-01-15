@@ -2,15 +2,26 @@
   display: flex;
   flex-direction: column;
   gap: 8px;
+  padding: 8px;
 }
 
 .cache-panel__actions {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-wrap: wrap;
+}
+
+.cache-panel__toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #666;
+  font-size: 12px;
 }
 
 .cache-panel__count {
+  margin-left: auto;
   color: #666;
   font-size: 12px;
 }
@@ -32,6 +43,6 @@
   font-size: 12px;
 }
 
-tr.cache-match {
+tr.cache-usable {
   background-color: rgba(24, 144, 255, 0.08);
 }

@@ -27,10 +27,19 @@
       (click)="refresh()">
       Refresh
     </button>
+    <label class="cache-panel__toggle">
+      <nz-switch
+        nzSize="small"
+        [(ngModel)]="showUsableOnly"
+        (ngModelChange)="updateVisibleEntries()"></nz-switch>
+      <span>Usable by this execution</span>
+    </label>
     <span
       class="cache-panel__count"
       *ngIf="cacheEntries.length">
-      {{ cacheEntries.length }} entries
+      {{ visibleEntries.length }}
+      <ng-container *ngIf="showUsableOnly">of {{ cacheEntries.length }}</ng-container>
+      entries
     </span>
   </div>
 
@@ -40,8 +49,8 @@
     [nzFrontPagination]="false"
     nzTableLayout="auto"
     [nzLoading]="loading"
-    *ngIf="loading || cacheEntries.length"
-    [nzData]="cacheEntries">
+    *ngIf="loading || visibleEntries.length"
+    [nzData]="visibleEntries">
     <thead>
       <tr>
         <th>Port</th>
@@ -50,8 +59,8 @@
     </thead>
     <tbody>
       <tr
-        *ngFor="let entry of cacheEntries"
-        [class.cache-match]="isMatched(entry)">
+        *ngFor="let entry of visibleEntries"
+        [class.cache-usable]="isUsableForExecution(entry)">
         <td>
           <div class="cache-port">
             <div class="cache-port__op">{{ entry.logicalOpId }}</div>
@@ -64,9 +73,9 @@
         <td>
           <div class="cache-meta">
             <nz-tag
-              *ngIf="isMatched(entry)"
+              *ngIf="isUsableForExecution(entry)"
               nzColor="blue">
-              Matched
+              Usable by this execution
             </nz-tag>
             <div>source execution: {{ formatSourceExecutionId(entry.sourceExecutionId) }}</div>
             <div>tuples: {{ formatTupleCount(entry.tupleCount) }}</div>
@@ -79,7 +88,7 @@
   </nz-table>
 
   <nz-empty
-    *ngIf="!loading && !cacheEntries.length"
-    nzNotFoundContent="No cache entries">
+    *ngIf="!loading && !visibleEntries.length"
+    [nzNotFoundContent]="showUsableOnly ? 'No usable cache entries' : 'No cache entries'">
   </nz-empty>
 </div>
