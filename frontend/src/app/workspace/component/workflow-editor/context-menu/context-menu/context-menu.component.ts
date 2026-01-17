@@ -27,6 +27,8 @@ import { NzModalService } from "ng-zorro-antd/modal";
 import { ResultExportationComponent } from "../../../result-exportation/result-exportation.component";
 import { ValidationWorkflowService } from "src/app/workspace/service/validation/validation-workflow.service";
 import { GuiConfigService } from "../../../../../common/service/gui-config.service";
+import { WorkflowExecutionsService } from "src/app/dashboard/service/user/workflow-executions/workflow-executions.service";
+import { WorkflowCacheEntriesService } from "src/app/workspace/service/workflow-status/workflow-cache-entries.service";
 
 @UntilDestroy()
 @Component({
@@ -44,7 +46,9 @@ export class ContextMenuComponent {
     protected config: GuiConfigService,
     private workflowResultService: WorkflowResultService,
     private modalService: NzModalService,
-    private validationWorkflowService: ValidationWorkflowService
+    private validationWorkflowService: ValidationWorkflowService,
+    private workflowExecutionsService: WorkflowExecutionsService,
+    private cacheEntriesService: WorkflowCacheEntriesService
   ) {
     this.registerWorkflowModifiableChangedHandler();
   }
@@ -143,5 +147,73 @@ export class ContextMenuComponent {
       },
       nzFooter: null,
     });
+  }
+
+  /**
+   * Clears cached outputs produced by the selected operator.
+   */
+  public clearCacheForSelectedOperator(): void {
+    const workflowId = this.workflowActionService.getWorkflowMetadata()?.wid;
+    if (!workflowId || !this.hasExactlyOneOperatorSelected()) {
+      return;
+    }
+    const operatorId = this.getSelectedOperatorID();
+    this.workflowExecutionsService
+      .evictWorkflowCacheEntries(workflowId, [operatorId])
+      .pipe(untilDestroyed(this))
+      .subscribe(() => {
+        this.cacheEntriesService.refreshCacheEntries(workflowId).subscribe();
+      });
+  }
+
+  /**
+   * Clears cached outputs produced by the selected operator and its upstream operators.
+   */
+  public clearCacheUpToSelectedOperator(): void {
+    const workflowId = this.workflowActionService.getWorkflowMetadata()?.wid;
+    if (!workflowId || !this.hasExactlyOneOperatorSelected()) {
+      return;
+    }
+    const operatorId = this.getSelectedOperatorID();
+    const upstreamOperatorIds = this.collectUpstreamOperatorIds(operatorId);
+    this.workflowExecutionsService
+      .evictWorkflowCacheEntries(workflowId, upstreamOperatorIds)
+      .pipe(untilDestroyed(this))
+      .subscribe(() => {
+        this.cacheEntriesService.refreshCacheEntries(workflowId).subscribe();
+      });
+  }
+
+  /**
+   * Returns the selected operator and all upstream operator IDs (includes disabled operators).
+   */
+  private collectUpstreamOperatorIds(operatorId: string): string[] {
+    const links = this.workflowActionService.getTexeraGraph().getAllLinks();
+    const incoming = new Map<string, string[]>();
+    links.forEach(link => {
+      const sourceId = link.source.operatorID;
+      const targetId = link.target.operatorID;
+      if (!incoming.has(targetId)) {
+        incoming.set(targetId, []);
+      }
+      incoming.get(targetId)!.push(sourceId);
+    });
+
+    const visited = new Set<string>();
+    const queue: string[] = [operatorId];
+    while (queue.length > 0) {
+      const current = queue.shift();
+      if (!current || visited.has(current)) {
+        continue;
+      }
+      visited.add(current);
+      const upstream = incoming.get(current) ?? [];
+      upstream.forEach(upstreamId => {
+        if (!visited.has(upstreamId)) {
+          queue.push(upstreamId);
+        }
+      });
+    }
+    return Array.from(visited);
   }
 }

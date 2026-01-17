@@ -24,7 +24,7 @@ import { HttpClient, HttpParams } from "@angular/common/http";
 import { WorkflowExecutionsEntry } from "../../../type/workflow-executions-entry";
 import { WorkflowCacheEntry } from "../../../type/workflow-cache-entry";
 import { WorkflowRuntimeStatistics } from "../../../type/workflow-runtime-statistics";
-import { ExecutionState } from "../../../../workspace/types/execute-workflow.interface";
+import { ExecutionState, LogicalPlan } from "../../../../workspace/types/execute-workflow.interface";
 
 export const WORKFLOW_EXECUTIONS_API_BASE_URL = `${AppSettings.getApiEndpoint()}/executions`;
 
@@ -113,5 +113,21 @@ export class WorkflowExecutionsService {
    */
   deleteWorkflowCacheEntries(wid: number): Observable<void> {
     return this.http.post<void>(`${WORKFLOW_EXECUTIONS_API_BASE_URL}/${wid}/cache/clear`, {});
+  }
+
+  /**
+   * Evicts cache entries owned by the provided logical operators.
+   */
+  evictWorkflowCacheEntries(wid: number, logicalOpIds: ReadonlyArray<string>): Observable<void> {
+    return this.http.post<void>(`${WORKFLOW_EXECUTIONS_API_BASE_URL}/${wid}/cache/evict`, {
+      logicalOpIds,
+    });
+  }
+
+  /**
+   * Invalidates cache entries whose fingerprints do not match the provided logical plan.
+   */
+  invalidateWorkflowCacheEntries(wid: number, logicalPlan: LogicalPlan): Observable<void> {
+    return this.http.post<void>(`${WORKFLOW_EXECUTIONS_API_BASE_URL}/${wid}/cache/invalidate`, logicalPlan);
   }
 }

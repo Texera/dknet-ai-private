@@ -28,9 +28,11 @@ import { fromJointPaperEvent, JointUIService, linkPathStrokeColor } from "../../
 import { ValidationWorkflowService } from "../../service/validation/validation-workflow.service";
 import { WorkflowActionService } from "../../service/workflow-graph/model/workflow-action.service";
 import { CacheUsageService } from "../../service/workflow-status/cache-usage.service";
+import { WorkflowCacheEntriesService } from "../../service/workflow-status/workflow-cache-entries.service";
 import { WorkflowStatusService } from "../../service/workflow-status/workflow-status.service";
 import { ExecutionState, OperatorState } from "../../types/execute-workflow.interface";
-import { LogicalPort, OperatorLink, OperatorPredicate } from "../../types/workflow-common.interface";
+import { LogicalPort, OperatorLink } from "../../types/workflow-common.interface";
+import { WorkflowCacheEntry } from "../../../dashboard/type/workflow-cache-entry";
 import { auditTime, filter, map, takeUntil } from "rxjs/operators";
 import { UntilDestroy, untilDestroyed } from "@ngneat/until-destroy";
 import { UndoRedoService } from "../../service/undo-redo/undo-redo.service";
@@ -99,6 +101,7 @@ export class WorkflowEditorComponent implements OnInit, AfterViewInit, OnDestroy
   private currentOpenedOperatorID: string | null = null;
   private removeButton!: new () => joint.linkTools.Button;
   private breakpointButton!: new () => joint.linkTools.Button;
+  private cachedEntries: ReadonlyArray<WorkflowCacheEntry> = [];
 
   // Inline panels state - per-operator open panels
   public openPanelIds: Set<string> = new Set();
@@ -148,6 +151,7 @@ export class WorkflowEditorComponent implements OnInit, AfterViewInit, OnDestroy
     private jointUIService: JointUIService,
     private workflowStatusService: WorkflowStatusService,
     private cacheUsageService: CacheUsageService,
+    private cacheEntriesService: WorkflowCacheEntriesService,
     private executeWorkflowService: ExecuteWorkflowService,
     private nzModalService: NzModalService,
     private changeDetectorRef: ChangeDetectorRef,
@@ -212,6 +216,7 @@ export class WorkflowEditorComponent implements OnInit, AfterViewInit, OnDestroy
     this.registerPortDisplayNameChangeHandler();
     this.handleOperatorStatisticsUpdate();
     this.handleCacheUsageUpdate();
+    this.handleCacheEntriesUpdate();
     this.handleRegionEvents();
     this.handleOperatorSuggestionHighlightEvent();
     this.handleAgentHoverHighlight();
@@ -406,6 +411,52 @@ export class WorkflowEditorComponent implements OnInit, AfterViewInit, OnDestroy
               this.cacheUsageService.getPortCacheLabels(op.operatorID)
             );
           });
+      });
+  }
+
+  /**
+   * Updates cached output port indicators whenever cache entries or graph structure changes.
+   */
+  private handleCacheEntriesUpdate(): void {
+    this.cacheEntriesService
+      .getCacheEntriesStream()
+      .pipe(untilDestroyed(this))
+      .subscribe(entries => {
+        this.cachedEntries = entries;
+        this.applyCachedPortIndicators();
+      });
+
+    merge(
+      this.workflowActionService.getTexeraGraph().getOperatorAddStream(),
+      this.workflowActionService.getTexeraGraph().getOperatorDeleteStream(),
+      this.workflowActionService.getTexeraGraph().getPortAddedOrDeletedStream()
+    )
+      .pipe(untilDestroyed(this))
+      .subscribe(() => {
+        this.applyCachedPortIndicators();
+      });
+  }
+
+  /**
+   * Applies cached port indicators based on the latest cache entry snapshot.
+   */
+  private applyCachedPortIndicators(): void {
+    const cachedPortsByOperator = new Map<string, Set<string>>();
+    this.cachedEntries
+      .filter(entry => !entry.internal)
+      .forEach(entry => {
+        if (!cachedPortsByOperator.has(entry.logicalOpId)) {
+          cachedPortsByOperator.set(entry.logicalOpId, new Set<string>());
+        }
+        cachedPortsByOperator.get(entry.logicalOpId)!.add(entry.portId.toString());
+      });
+
+    this.workflowActionService
+      .getTexeraGraph()
+      .getAllOperators()
+      .forEach(op => {
+        const cachedPorts = cachedPortsByOperator.get(op.operatorID) ?? new Set<string>();
+        this.jointUIService.changeOperatorCachedPorts(this.paper, op.operatorID, cachedPorts);
       });
   }
 

@@ -125,6 +125,32 @@
   </li>
   <li
     nz-menu-item
+    *ngIf="operatorMenuService.highlightedOperators.value.length === 1 &&
+  operatorMenuService.highlightedCommentBoxes.value.length === 0 &&
+  !hasHighlightedLinks() &&
+  isWorkflowModifiable"
+    (click)="clearCacheForSelectedOperator()">
+    <span
+      nz-icon
+      nzType="database"
+      nzTheme="outline"></span
+    >clear cache
+  </li>
+  <li
+    nz-menu-item
+    *ngIf="operatorMenuService.highlightedOperators.value.length === 1 &&
+  operatorMenuService.highlightedCommentBoxes.value.length === 0 &&
+  !hasHighlightedLinks() &&
+  isWorkflowModifiable"
+    (click)="clearCacheUpToSelectedOperator()">
+    <span
+      nz-icon
+      nzType="database"
+      nzTheme="twotone"></span
+    >clear cache up to this operator
+  </li>
+  <li
+    nz-menu-item
     *ngIf="(operatorMenuService.highlightedOperators.value.length > 0 ||
   operatorMenuService.highlightedCommentBoxes.value.length > 0) &&
   isWorkflowModifiable"

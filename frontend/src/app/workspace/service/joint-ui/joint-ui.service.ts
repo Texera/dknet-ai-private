@@ -447,6 +447,30 @@ export class JointUIService {
       }
     });
   }
+
+  /**
+   * Updates cached output port indicator rings without changing counts or labels.
+   */
+  public changeOperatorCachedPorts(
+    jointPaper: joint.dia.Paper,
+    operatorID: string,
+    cachedPortIds?: Set<string>
+  ): void {
+    const element = jointPaper.getModelById(operatorID) as joint.shapes.devs.Model;
+    if (!element) {
+      return;
+    }
+    const outPorts = element.getPorts().filter(p => p.group === "out");
+    outPorts.forEach(portDef => {
+      const portId = portDef.id;
+      if (portId != null) {
+        const parts = portId.split("-");
+        const numericSuffix = parts.length > 1 ? parts[1] : portId;
+        const isCached = cachedPortIds?.has(numericSuffix) ?? false;
+        element.portProp(portId, "attrs/.port-cache-indicator/display", isCached ? "block" : "none");
+      }
+    });
+  }
   public foldOperatorDetails(jointPaper: joint.dia.Paper, operatorID: string): void {
     jointPaper.getModelById(operatorID).attr({
       [`.${operatorStateClass}`]: { visibility: "hidden" },
@@ -704,6 +728,13 @@ export class JointUIService {
         r: 5,
         stroke: "none",
       },
+      ".port-cache-indicator": {
+        fill: "none",
+        r: 7,
+        stroke: "#1890ff",
+        "stroke-width": 1.5,
+        display: "none",
+      },
       ".port-label": {
         visibility: "visible",
         event: "input-label:evt",
@@ -721,6 +752,13 @@ export class JointUIService {
    */
   public static getCustomPortMarkup(): any[] {
     return [
+      {
+        tagName: "circle",
+        selector: ".port-cache-indicator",
+        attributes: {
+          class: "port-cache-indicator",
+        },
+      },
       {
         tagName: "circle",
         selector: ".port-body",

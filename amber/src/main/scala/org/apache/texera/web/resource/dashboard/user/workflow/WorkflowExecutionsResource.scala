@@ -28,7 +28,7 @@ import org.apache.texera.amber.core.storage.{
 }
 import org.apache.texera.amber.core.tuple.Tuple
 import org.apache.texera.amber.core.virtualidentity._
-import org.apache.texera.amber.core.workflow.{GlobalPortIdentity, PortIdentity}
+import org.apache.texera.amber.core.workflow.{GlobalPortIdentity, PortIdentity, WorkflowContext}
 import org.apache.texera.amber.engine.architecture.logreplay.{ReplayDestination, ReplayLogRecord}
 import org.apache.texera.amber.engine.common.Utils.{maptoStatusCode, stringToAggregatedState}
 import org.apache.texera.amber.engine.common.storage.SequentialRecordStorage
@@ -44,6 +44,7 @@ import org.apache.texera.dao.jooq.generated.tables.daos.WorkflowExecutionsDao
 import org.apache.texera.dao.jooq.generated.tables.pojos.{WorkflowExecutions, User => UserPojo}
 import org.apache.texera.web.dao.OperatorPortCacheDao
 import org.apache.texera.web.model.http.request.result.ResultExportRequest
+import org.apache.texera.web.model.websocket.request.LogicalPlanPojo
 import org.apache.texera.web.resource.dashboard.user.workflow.WorkflowExecutionsResource._
 import org.apache.texera.web.service.{
   ExecutionsMetadataPersistService,
@@ -52,6 +53,7 @@ import org.apache.texera.web.service.{
 }
 import org.jooq.DSLContext
 import play.api.libs.json.Json
+import org.apache.texera.workflow.WorkflowCompiler
 
 import java.net.URI
 import java.sql.Timestamp
@@ -590,6 +592,13 @@ case class ExecutionGroupDeleteRequest(wid: Integer, eIds: Array[Integer])
 
 case class ExecutionRenameRequest(wid: Integer, eId: Integer, executionName: String)
 
+/**
+  * Request payload for evicting cache entries owned by specific logical operators.
+  *
+  * @param logicalOpIds Logical operator IDs whose output caches should be removed
+  */
+case class CacheEvictionRequest(logicalOpIds: List[String])
+
 @Produces(Array(MediaType.APPLICATION_JSON, MediaType.APPLICATION_OCTET_STREAM, "application/zip"))
 @Path("/executions")
 class WorkflowExecutionsResource {
@@ -847,6 +856,55 @@ class WorkflowExecutionsResource {
       @Auth sessionUser: SessionUser
   ): Unit = {
     clearWorkflowCacheEntriesInternal(wid, sessionUser)
+  }
+
+  /**
+    * Evicts cache entries for the specified logical operators.
+    * This removes all cached outputs produced by those operators, regardless of fingerprint.
+    */
+  @POST
+  @Consumes(Array(MediaType.APPLICATION_JSON))
+  @Path("/{wid}/cache/evict")
+  @RolesAllowed(Array("REGULAR", "ADMIN"))
+  def evictWorkflowCacheEntries(
+      request: CacheEvictionRequest,
+      @PathParam("wid") wid: Integer,
+      @Auth sessionUser: SessionUser
+  ): Unit = {
+    validateUserCanWriteWorkflow(sessionUser.getUser.getUid, wid)
+    val logicalOpIds = Option(request.logicalOpIds).getOrElse(List.empty).map(_.trim).filter(_.nonEmpty)
+    if (logicalOpIds.isEmpty) {
+      return
+    }
+    val dao = new OperatorPortCacheDao(SqlServer.getInstance())
+    val cacheService = new OperatorPortCacheService(dao)
+    cacheService.invalidateCacheForLogicalOperators(WorkflowIdentity(wid.toLong), logicalOpIds)
+  }
+
+  /**
+    * Invalidates cache entries whose fingerprints do not match the provided logical plan.
+    * Intended to be called after workflow compilation during editing.
+    */
+  @POST
+  @Consumes(Array(MediaType.APPLICATION_JSON))
+  @Path("/{wid}/cache/invalidate")
+  @RolesAllowed(Array("REGULAR", "ADMIN"))
+  def invalidateWorkflowCacheEntries(
+      request: LogicalPlanPojo,
+      @PathParam("wid") wid: Integer,
+      @Auth sessionUser: SessionUser
+  ): Unit = {
+    validateUserCanWriteWorkflow(sessionUser.getUser.getUid, wid)
+    val workflow = try {
+      val workflowContext = new WorkflowContext(workflowId = WorkflowIdentity(wid.toLong))
+      new WorkflowCompiler(workflowContext).compile(request)
+    } catch {
+      case err: Throwable =>
+        throw new BadRequestException(s"Failed to compile workflow for cache invalidation: ${err.getMessage}")
+    }
+    val dao = new OperatorPortCacheDao(SqlServer.getInstance())
+    val cacheService = new OperatorPortCacheService(dao)
+    cacheService.invalidateMismatchedCacheEntries(WorkflowIdentity(wid.toLong), workflow.physicalPlan)
   }
 
   /**

@@ -25,7 +25,7 @@ import { AppSettings } from "../../../common/app-setting";
 import { areOperatorSchemasEqual, OperatorSchema } from "../../types/operator-schema.interface";
 import { ExecuteWorkflowService } from "../execute-workflow/execute-workflow.service";
 import { WorkflowActionService } from "../workflow-graph/model/workflow-action.service";
-import { catchError, debounceTime, mergeMap } from "rxjs/operators";
+import { catchError, debounceTime, map, mergeMap } from "rxjs/operators";
 import { DynamicSchemaService } from "../dynamic-schema/dynamic-schema.service";
 import {
   AttributeType,
@@ -42,6 +42,8 @@ import { WorkflowGraphReadonly } from "../workflow-graph/model/workflow-graph";
 import { serializePortIdentity } from "../../../common/util/port-identity-serde";
 import { addCompilationError, areAllPortSchemasEqual } from "../../../common/util/workflow-compilation-utils";
 import { parseLogicalOperatorPortID } from "../../../common/util/logical-operator-port-serde";
+import { WorkflowExecutionsService } from "../../../dashboard/service/user/workflow-executions/workflow-executions.service";
+import { WorkflowCacheEntriesService } from "../workflow-status/workflow-cache-entries.service";
 
 // endpoint for workflow compile
 export const WORKFLOW_COMPILATION_ENDPOINT = "compile";
@@ -49,10 +51,11 @@ export const WORKFLOW_COMPILATION_ENDPOINT = "compile";
 export const WORKFLOW_COMPILATION_DEBOUNCE_TIME_MS = 500;
 
 /**
- * Workflow Compiling Service provides mainly 3 functionalities:
+ * Workflow Compiling Service provides mainly 4 functionalities:
  * 1. autocomplete attribute property of operators (previously done by the SchemaPropagationService)
  * 2. receive static errors (previously done by sending EditingTimeCompilationRequest and saving in the ExecutionStateInfo)
  * 3. manage PhysicalPlan (TODO: send the physical plan to the standalone WorkflowExecutingService once we have it)
+ * 4. invalidate mismatched cache entries after successful compilation
  *
  * When user creates and connects operators in workflow, the WorkflowCompilingService's api will be triggered, which,
  * propagate the schemas, compiles the user's workflow to get the physical plan and static errors(if any).
@@ -73,7 +76,9 @@ export class WorkflowCompilingService {
     private httpClient: HttpClient,
     private workflowActionService: WorkflowActionService,
     private dynamicSchemaService: DynamicSchemaService,
-    private validationWorkflowService: ValidationWorkflowService
+    private validationWorkflowService: ValidationWorkflowService,
+    private workflowExecutionsService: WorkflowExecutionsService,
+    private cacheEntriesService: WorkflowCacheEntriesService
   ) {
     // Subscribe to compilation state changes to apply schema propagation
     this.compilationStateInfoChangedStream.subscribe(() => {
@@ -99,10 +104,10 @@ export class WorkflowCompilingService {
             this.validationWorkflowService.getValidTexeraGraph(),
             undefined
           );
-          return this.compile(logicalPlan);
+          return this.compile(logicalPlan).pipe(map(response => ({ response, logicalPlan })));
         })
       )
-      .subscribe(response => {
+      .subscribe(({ response, logicalPlan }) => {
         if (response.physicalPlan) {
           this.currentCompilationStateInfo = {
             state: CompilationState.Succeeded,
@@ -117,6 +122,7 @@ export class WorkflowCompilingService {
           };
         }
         this.compilationStateInfoChangedStream.next(this.currentCompilationStateInfo.state);
+        this.invalidateMismatchedCacheEntries(logicalPlan);
       });
   }
 
@@ -383,6 +389,7 @@ export class WorkflowCompilingService {
       opsToReuseResult: [],
       opsToViewResult: [],
     };
+    console.log(body);
     // make a http post request to the API endpoint with the logical plan object
     return this.httpClient
       .post<WorkflowCompilationResponse>(
@@ -400,6 +407,32 @@ export class WorkflowCompilingService {
           return EMPTY;
         })
       );
+  }
+
+  /**
+   * Triggers cache invalidation after a successful compilation.
+   * Cache entries with mismatched fingerprints are removed on the backend.
+   */
+  private invalidateMismatchedCacheEntries(logicalPlan: LogicalPlan): void {
+    const workflowId = this.workflowActionService.getWorkflowMetadata().wid;
+    if (
+      workflowId === undefined ||
+      workflowId <= 0 ||
+      this.currentCompilationStateInfo.state !== CompilationState.Succeeded
+    ) {
+      return;
+    }
+    this.workflowExecutionsService
+      .invalidateWorkflowCacheEntries(workflowId, logicalPlan)
+      .pipe(
+        catchError(err => {
+          console.warn("cache invalidation failed during compilation", err);
+          return EMPTY;
+        })
+      )
+      .subscribe(() => {
+        this.cacheEntriesService.refreshCacheEntries(workflowId).subscribe();
+      });
   }
 
   public static setOperatorInputAttrs(

@@ -21,9 +21,9 @@ import { Component, OnInit } from "@angular/core";
 import { ActivatedRoute } from "@angular/router";
 import { finalize } from "rxjs/operators";
 import { UntilDestroy, untilDestroyed } from "@ngneat/until-destroy";
-import { WorkflowExecutionsService } from "../../../../dashboard/service/user/workflow-executions/workflow-executions.service";
 import { WorkflowCacheEntry } from "../../../../dashboard/type/workflow-cache-entry";
 import { CacheUsageService } from "../../../service/workflow-status/cache-usage.service";
+import { WorkflowCacheEntriesService } from "../../../service/workflow-status/workflow-cache-entries.service";
 
 /**
  * CachePanelComponent renders cache entry metadata for the current workflow.
@@ -47,7 +47,7 @@ export class CachePanelComponent implements OnInit {
   private usageKeys = new Set<string>();
 
   constructor(
-    private workflowExecutionsService: WorkflowExecutionsService,
+    private cacheEntriesService: WorkflowCacheEntriesService,
     private cacheUsageService: CacheUsageService,
     private route: ActivatedRoute
   ) {}
@@ -58,6 +58,19 @@ export class CachePanelComponent implements OnInit {
       return;
     }
     this.workflowId = workflowId;
+    this.cacheEntriesService
+      .getCacheEntriesStream()
+      .pipe(untilDestroyed(this))
+      .subscribe(entries => {
+        this.cacheEntries = [...entries];
+        this.updateVisibleEntries();
+      });
+    this.cacheEntriesService
+      .getLoadingStream()
+      .pipe(untilDestroyed(this))
+      .subscribe(loading => {
+        this.loading = loading;
+      });
     this.refresh();
     this.cacheUsageService
       .getCacheUsageStream()
@@ -77,41 +90,26 @@ export class CachePanelComponent implements OnInit {
     if (!this.workflowId) {
       return;
     }
-    this.loading = true;
-    this.workflowExecutionsService
-      .retrieveWorkflowCacheEntries(this.workflowId)
-      .pipe(
-        finalize(() => {
-          this.loading = false;
-        }),
-        untilDestroyed(this)
-      )
-      .subscribe(entries => {
-        this.cacheEntries = entries;
-        this.updateVisibleEntries();
-      });
+    this.cacheEntriesService.refreshCacheEntries(this.workflowId).pipe(untilDestroyed(this)).subscribe();
   }
 
   /**
-   * Removes all cached outputs for the workflow and refreshes the list.
+   * Removes all cached outputs for the workflow and updates shared cache state.
    */
   public clearCacheEntries(): void {
     if (!this.workflowId) {
       return;
     }
     this.removing = true;
-    this.workflowExecutionsService
-      .deleteWorkflowCacheEntries(this.workflowId)
+    this.cacheEntriesService
+      .clearWorkflowCacheEntries(this.workflowId)
       .pipe(
         finalize(() => {
           this.removing = false;
         }),
         untilDestroyed(this)
       )
-      .subscribe(() => {
-        this.cacheEntries = [];
-        this.updateVisibleEntries();
-      });
+      .subscribe();
   }
 
   /**

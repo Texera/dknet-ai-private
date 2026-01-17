@@ -192,7 +192,16 @@ Entry point: `RegionExecutionCoordinator` constructor branches on `region.cached
 - Cache panel toggle to show only entries usable by the current execution
 - Cache panel action to clear all cached results (deletes cache entries, result documents, and port result records)
 - Output port labels show tuple counts, plus a second line with source execution id for cached outputs
+- Output ports show a cached indicator when any cache entry exists for that port
+- Editor context menu can evict cache for the selected operator or its upstream operators
 - Result URI hidden from the UI
+
+**Cache UX & invalidation (Implemented)**:
+
+- Output ports show a cached indicator when any cache entry exists for that port (no usable/not-usable distinction on the graph)
+- Context menu actions: "Clear cache" (selected operator) and "Clear cache up to this operator" (includes disabled operators and the selected operator)
+- Cache invalidation on compile: evict cache entries whose fingerprints no longer match the current workflow
+- TODO: Use source execution runtime stats for cached operator input/output counts, with fallback to `operator_port_cache.tuple_count` when stats are missing
 
 **Cache usage updates**:
 
@@ -282,6 +291,8 @@ HTTP endpoints for external access:
 - `GET /executions/{workflowId}/cache?limit=<n>&offset=<n>`: List cache entries (result_uri omitted)
 - `DELETE /executions/{workflowId}/cache`: Clear all cache entries and delete stored result documents
 - `POST /executions/{workflowId}/cache/clear`: POST alternative for environments that block DELETE
+- `POST /executions/{workflowId}/cache/evict`: Evict cache entries for specified logical operator IDs
+- `POST /executions/{workflowId}/cache/invalidate`: Remove cache entries whose fingerprints do not match the provided logical plan
 
 **Note**: Internal services use `OperatorPortCacheService`, not the REST resource.
 
@@ -519,7 +530,14 @@ The cache system integrates with three layers:
 - [X] Re-emit cache usage snapshots on websocket connect to refresh cache labels after reload
 - [X] Keep result URI hidden in the UI
 
-#### 1.4 Testing & Validation
+#### 1.4 Cache UX & Invalidation ✓ COMPLETE
+
+- [X] Show cached indicator on output ports for any cache entry
+- [X] Add context-menu actions to clear cache for selected operator and upstream operators (includes disabled)
+- [X] Invalidate mismatched cache entries on compile (fingerprint comparison)
+- [ ] TODO: Use source execution runtime stats for cached operator counts, with tuple-count fallback
+
+#### 1.5 Testing & Validation
 
 - [X] Verify downstream cached URI consumption across all operator types
 - [ ] Add integration tests: cache upsert → DB verification

@@ -22,6 +22,7 @@ package org.apache.texera.web.service
 import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
 import org.apache.texera.amber.core.workflow.cache.FingerprintUtil
 import org.apache.texera.amber.core.workflow.{CachedOutput, GlobalPortIdentity, PhysicalPlan}
+import org.apache.texera.amber.util.serde.GlobalPortIdentitySerde
 import org.apache.texera.amber.util.serde.GlobalPortIdentitySerde.SerdeOps
 import org.apache.texera.dao.SqlServer
 import org.apache.texera.dao.jooq.generated.Tables.OPERATOR_PORT_EXECUTIONS
@@ -30,6 +31,7 @@ import org.apache.texera.amber.core.storage.DocumentFactory
 
 import java.net.URI
 import scala.jdk.CollectionConverters._
+import scala.util.Try
 
 /**
   * Service for operator port result caching.
@@ -40,6 +42,7 @@ import scala.jdk.CollectionConverters._
   * - Cache entry creation when output ports complete
   * - Fingerprint computation and serialization
   * - Cache invalidation and lifecycle management
+  * - Manual eviction by logical operator and compile-time mismatch cleanup
   *
   * @param dao OperatorPortCacheDao for database access
   */
@@ -131,10 +134,59 @@ class OperatorPortCacheService(dao: OperatorPortCacheDao) {
     */
   def invalidateWorkflowCache(workflowId: WorkflowIdentity): Unit = {
     val cacheEntries = dao.listByWorkflow(workflowId.id, Int.MaxValue, 0)
-    val resultUris = cacheEntries.map(_.resultUri).distinct
-    deleteOperatorPortResultsByUris(resultUris)
-    dao.deleteByWorkflow(workflowId.id)
-    clearCachedResultDocuments(resultUris)
+    deleteCacheEntriesByPorts(workflowId, cacheEntries)
+  }
+
+  /**
+    * Invalidate cache entries for outputs owned by the provided logical operators.
+    * This is used by editor actions that evict cache for selected operators.
+    *
+    * @param workflowId Workflow ID whose cache entries should be deleted
+    * @param logicalOpIds Logical operator IDs whose output caches should be removed
+    * @return Number of cache entries invalidated
+    */
+  def invalidateCacheForLogicalOperators(
+      workflowId: WorkflowIdentity,
+      logicalOpIds: Seq[String]
+  ): Int = {
+    val normalizedIds = logicalOpIds.map(_.trim).filter(_.nonEmpty).toSet
+    if (normalizedIds.isEmpty) {
+      return 0
+    }
+    val cacheEntries = dao.listByWorkflow(workflowId.id, Int.MaxValue, 0)
+    val entriesToDelete = cacheEntries.filter { entry =>
+      val logicalOpIdOpt =
+        Try(GlobalPortIdentitySerde.deserializeFromString(entry.globalPortId))
+          .toOption
+          .map(_.opId.logicalOpId.id)
+      logicalOpIdOpt.exists(normalizedIds.contains)
+    }
+    deleteCacheEntriesByPorts(workflowId, entriesToDelete)
+    entriesToDelete.size
+  }
+
+  /**
+    * Invalidate cache entries whose fingerprints no longer match the current plan.
+    * This supports compile-time invalidation after workflow edits.
+    *
+    * @param workflowId Workflow ID whose cache entries should be checked
+    * @param physicalPlan Latest compiled physical plan
+    * @return Number of cache entries invalidated
+    */
+  def invalidateMismatchedCacheEntries(
+      workflowId: WorkflowIdentity,
+      physicalPlan: PhysicalPlan
+  ): Int = {
+    val cacheEntries = dao.listByWorkflow(workflowId.id, Int.MaxValue, 0)
+    val entriesToDelete = cacheEntries.filter { entry =>
+      val fingerprintHashOpt = Try {
+        val portId = GlobalPortIdentitySerde.deserializeFromString(entry.globalPortId)
+        FingerprintUtil.computeSubdagFingerprint(physicalPlan, portId).subdagHash
+      }.toOption
+      fingerprintHashOpt.forall(_ != entry.subdagHash)
+    }
+    deleteCacheEntriesByKeys(workflowId, entriesToDelete)
+    entriesToDelete.size
   }
 
   /**
@@ -163,6 +215,41 @@ class OperatorPortCacheService(dao: OperatorPortCacheDao) {
         // Document already deleted or unavailable - safe to ignore.
       }
     }
+  }
+
+  /**
+    * Deletes cache entries by port ID, and removes associated result artifacts.
+    */
+  private def deleteCacheEntriesByPorts(
+      workflowId: WorkflowIdentity,
+      entries: Seq[OperatorPortCacheRecord]
+  ): Unit = {
+    if (entries.isEmpty) {
+      return
+    }
+    val resultUris = entries.map(_.resultUri).distinct
+    deleteOperatorPortResultsByUris(resultUris)
+    dao.deleteByGlobalPortIds(workflowId.id, entries.map(_.globalPortId).distinct)
+    clearCachedResultDocuments(resultUris)
+  }
+
+  /**
+    * Deletes cache entries by (port ID, subDAG hash) pair, and removes associated result artifacts.
+    */
+  private def deleteCacheEntriesByKeys(
+      workflowId: WorkflowIdentity,
+      entries: Seq[OperatorPortCacheRecord]
+  ): Unit = {
+    if (entries.isEmpty) {
+      return
+    }
+    val resultUris = entries.map(_.resultUri).distinct
+    deleteOperatorPortResultsByUris(resultUris)
+    dao.deleteByGlobalPortAndHashes(
+      workflowId.id,
+      entries.map(entry => (entry.globalPortId, entry.subdagHash))
+    )
+    clearCachedResultDocuments(resultUris)
   }
 
   /**

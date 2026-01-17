@@ -22,6 +22,7 @@ package org.apache.texera.web.dao
 import org.apache.texera.dao.SqlServer
 import org.apache.texera.dao.jooq.generated.Tables.OPERATOR_PORT_CACHE
 import org.jooq.DSLContext
+import org.jooq.impl.DSL
 
 import java.net.URI
 import java.time.OffsetDateTime
@@ -195,6 +196,53 @@ class OperatorPortCacheDao(sqlServer: SqlServer) {
     context
       .deleteFrom(OPERATOR_PORT_CACHE)
       .where(OPERATOR_PORT_CACHE.WORKFLOW_ID.eq(workflowId.toInt))
+      .execute()
+  }
+
+  /**
+    * Delete cache entries for a workflow by global port IDs.
+    * This removes all hashes for the specified output ports.
+    *
+    * @param workflowId Workflow ID whose cache entries should be deleted
+    * @param globalPortIds Serialized GlobalPortIdentity values
+    * @return Number of rows deleted
+    */
+  def deleteByGlobalPortIds(workflowId: Long, globalPortIds: Seq[String]): Int = {
+    val distinctPorts = globalPortIds.distinct
+    if (distinctPorts.isEmpty) {
+      return 0
+    }
+    context
+      .deleteFrom(OPERATOR_PORT_CACHE)
+      .where(OPERATOR_PORT_CACHE.WORKFLOW_ID.eq(workflowId.toInt))
+      .and(OPERATOR_PORT_CACHE.GLOBAL_PORT_ID.in(distinctPorts.asJava))
+      .execute()
+  }
+
+  /**
+    * Delete cache entries for a workflow by (global_port_id, subdag_hash) pairs.
+    * This removes only the specified fingerprint versions.
+    *
+    * @param workflowId Workflow ID whose cache entries should be deleted
+    * @param portHashes Sequence of (globalPortId, subdagHash) to remove
+    * @return Number of rows deleted
+    */
+  def deleteByGlobalPortAndHashes(
+      workflowId: Long,
+      portHashes: Seq[(String, String)]
+  ): Int = {
+    if (portHashes.isEmpty) {
+      return 0
+    }
+    val conditions = portHashes.map { case (portId, subdagHash) =>
+      OPERATOR_PORT_CACHE.GLOBAL_PORT_ID
+        .eq(portId)
+        .and(OPERATOR_PORT_CACHE.SUBDAG_HASH.eq(subdagHash))
+    }
+    context
+      .deleteFrom(OPERATOR_PORT_CACHE)
+      .where(OPERATOR_PORT_CACHE.WORKFLOW_ID.eq(workflowId.toInt))
+      .and(DSL.or(conditions.asJava))
       .execute()
   }
 }
