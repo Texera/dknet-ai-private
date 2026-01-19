@@ -20,6 +20,7 @@
 package org.apache.texera.amber.operator.hashJoin;
 
 import com.fasterxml.jackson.annotation.JsonValue;
+import com.fasterxml.jackson.annotation.JsonCreator;
 
 public enum JoinType {
     INNER("inner"),
@@ -36,6 +37,26 @@ public enum JoinType {
     @JsonValue
     public String getJoinType() {
         return this.value;
+    }
+
+    /**
+     * Parses a JSON join type string into the matching enum value.
+     * Accepts the serialized values (e.g., "full outer") case-insensitively.
+     *
+     * @param value join type string from JSON
+     * @return matching JoinType enum
+     */
+    @JsonCreator
+    public static JoinType fromString(String value) {
+        if (value == null) {
+            return null;
+        }
+        for (JoinType type : JoinType.values()) {
+            if (type.value.equalsIgnoreCase(value)) {
+                return type;
+            }
+        }
+        throw new IllegalArgumentException("Unknown join type: " + value);
     }
 
 }
