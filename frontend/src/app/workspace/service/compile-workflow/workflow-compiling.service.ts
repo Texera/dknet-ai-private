@@ -389,7 +389,6 @@ export class WorkflowCompilingService {
       opsToReuseResult: [],
       opsToViewResult: [],
     };
-    console.log(body);
     // make a http post request to the API endpoint with the logical plan object
     return this.httpClient
       .post<WorkflowCompilationResponse>(
