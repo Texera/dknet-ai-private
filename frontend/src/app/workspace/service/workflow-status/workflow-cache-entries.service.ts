@@ -24,6 +24,19 @@ import { WorkflowExecutionsService } from "../../../dashboard/service/user/workf
 import { WorkflowCacheEntry } from "../../../dashboard/type/workflow-cache-entry";
 import { WorkflowActionService } from "../workflow-graph/model/workflow-action.service";
 
+export interface CacheInvalidationNotice {
+  workflowId: number;
+  removedCount: number;
+  timestamp: Date;
+}
+
+export interface CacheManualClearNotice {
+  workflowId: number;
+  message: string;
+  removedCount?: number;
+  timestamp: Date;
+}
+
 /**
  * Shares workflow cache entry state across components and keeps it in sync with the backend.
  */
@@ -33,6 +46,8 @@ import { WorkflowActionService } from "../workflow-graph/model/workflow-action.s
 export class WorkflowCacheEntriesService {
   private readonly cacheEntriesSubject = new BehaviorSubject<ReadonlyArray<WorkflowCacheEntry>>([]);
   private readonly loadingSubject = new BehaviorSubject<boolean>(false);
+  private readonly invalidationNoticeSubject = new BehaviorSubject<CacheInvalidationNotice | undefined>(undefined);
+  private readonly manualClearNoticeSubject = new BehaviorSubject<CacheManualClearNotice | undefined>(undefined);
   private currentWorkflowId?: number;
 
   constructor(
@@ -75,6 +90,20 @@ export class WorkflowCacheEntriesService {
   }
 
   /**
+   * Returns a stream of cache invalidation notices triggered by compilation.
+   */
+  public getInvalidationNoticeStream(): Observable<CacheInvalidationNotice | undefined> {
+    return this.invalidationNoticeSubject.asObservable();
+  }
+
+  /**
+   * Returns a stream of manual cache clear/eviction notices.
+   */
+  public getManualClearNoticeStream(): Observable<CacheManualClearNotice | undefined> {
+    return this.manualClearNoticeSubject.asObservable();
+  }
+
+  /**
    * Returns the latest cache entry snapshot.
    */
   public getCacheEntriesSnapshot(): ReadonlyArray<WorkflowCacheEntry> {
@@ -106,6 +135,48 @@ export class WorkflowCacheEntriesService {
     return this.workflowExecutionsService.deleteWorkflowCacheEntries(workflowId).pipe(
       tap(() => this.cacheEntriesSubject.next([]))
     );
+  }
+
+  /**
+   * Emits a notification when auto-invalidated cache entries are removed.
+   */
+  public notifyInvalidation(workflowId: number, removedCount: number): void {
+    if (removedCount <= 0) {
+      return;
+    }
+    this.invalidationNoticeSubject.next({
+      workflowId,
+      removedCount,
+      timestamp: new Date(),
+    });
+  }
+
+  /**
+   * Clears the stored invalidation notice so it does not reappear.
+   */
+  public clearInvalidationNotice(): void {
+    this.invalidationNoticeSubject.next(undefined);
+  }
+
+  /**
+   * Emits a notification for manual cache clear or eviction actions.
+   */
+  public notifyManualClear(notice: CacheManualClearNotice): void {
+    this.manualClearNoticeSubject.next(notice);
+  }
+
+  /**
+   * Clears the stored manual cache-clear notice so it does not reappear.
+   */
+  public clearManualClearNotice(): void {
+    this.manualClearNoticeSubject.next(undefined);
+  }
+
+  /**
+   * Builds a stable key for a cache entry so invalidation diffs can be computed.
+   */
+  public buildEntryKey(entry: WorkflowCacheEntry): string {
+    return `${entry.globalPortId}:${entry.subdagHash}`;
   }
 
   /**

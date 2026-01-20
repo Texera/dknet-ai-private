@@ -150,7 +150,7 @@ export class ContextMenuComponent {
   }
 
   /**
-   * Clears cached outputs produced by the selected operator.
+   * Clears cached outputs produced by the selected operator and emits a cache panel notice.
    */
   public clearCacheForSelectedOperator(): void {
     const workflowId = this.workflowActionService.getWorkflowMetadata()?.wid;
@@ -158,16 +158,39 @@ export class ContextMenuComponent {
       return;
     }
     const operatorId = this.getSelectedOperatorID();
+    const beforeKeys = new Set(
+      this.cacheEntriesService.getCacheEntriesSnapshot().map(entry => this.cacheEntriesService.buildEntryKey(entry))
+    );
     this.workflowExecutionsService
       .evictWorkflowCacheEntries(workflowId, [operatorId])
       .pipe(untilDestroyed(this))
       .subscribe(() => {
-        this.cacheEntriesService.refreshCacheEntries(workflowId).subscribe();
+        this.cacheEntriesService.refreshCacheEntries(workflowId).subscribe(entries => {
+          const afterKeys = new Set(entries.map(entry => this.cacheEntriesService.buildEntryKey(entry)));
+          let removedCount = 0;
+          beforeKeys.forEach(key => {
+            if (!afterKeys.has(key)) {
+              removedCount += 1;
+            }
+          });
+          const entryLabel = removedCount === 1 ? "entry" : "entries";
+          const message =
+            removedCount === 0
+              ? "Cache cleared for selected operator."
+              : `Cleared ${removedCount} cache ${entryLabel} for selected operator.`;
+          this.cacheEntriesService.notifyManualClear({
+            workflowId,
+            message,
+            removedCount,
+            timestamp: new Date(),
+          });
+        });
       });
   }
 
   /**
-   * Clears cached outputs produced by the selected operator and its upstream operators.
+   * Clears cached outputs produced by the selected operator and its upstream operators,
+   * and emits a cache panel notice.
    */
   public clearCacheUpToSelectedOperator(): void {
     const workflowId = this.workflowActionService.getWorkflowMetadata()?.wid;
@@ -176,11 +199,33 @@ export class ContextMenuComponent {
     }
     const operatorId = this.getSelectedOperatorID();
     const upstreamOperatorIds = this.collectUpstreamOperatorIds(operatorId);
+    const beforeKeys = new Set(
+      this.cacheEntriesService.getCacheEntriesSnapshot().map(entry => this.cacheEntriesService.buildEntryKey(entry))
+    );
     this.workflowExecutionsService
       .evictWorkflowCacheEntries(workflowId, upstreamOperatorIds)
       .pipe(untilDestroyed(this))
       .subscribe(() => {
-        this.cacheEntriesService.refreshCacheEntries(workflowId).subscribe();
+        this.cacheEntriesService.refreshCacheEntries(workflowId).subscribe(entries => {
+          const afterKeys = new Set(entries.map(entry => this.cacheEntriesService.buildEntryKey(entry)));
+          let removedCount = 0;
+          beforeKeys.forEach(key => {
+            if (!afterKeys.has(key)) {
+              removedCount += 1;
+            }
+          });
+          const entryLabel = removedCount === 1 ? "entry" : "entries";
+          const message =
+            removedCount === 0
+              ? "Cache cleared for selected operator and upstream."
+              : `Cleared ${removedCount} cache ${entryLabel} for selected operator and upstream.`;
+          this.cacheEntriesService.notifyManualClear({
+            workflowId,
+            message,
+            removedCount,
+            timestamp: new Date(),
+          });
+        });
       });
   }
 

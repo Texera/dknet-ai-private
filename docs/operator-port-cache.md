@@ -201,6 +201,9 @@ Entry point: `RegionExecutionCoordinator` constructor branches on `region.cached
 - Output ports show a cached indicator when any cache entry exists for that port (no usable/not-usable distinction on the graph)
 - Context menu actions: "Clear cache" (selected operator) and "Clear cache up to this operator" (includes disabled operators and the selected operator)
 - Cache invalidation on compile: evict cache entries whose fingerprints no longer match the current workflow
+- Cache panel shows a notice when auto-invalidation removes entries after a compile
+- Cache panel shows a notice when users manually clear or evict cache entries (panel or context menu)
+- Compile endpoint accepts HashJoin join types (e.g., "full outer") to avoid 400s during invalidation
 - TODO: Use source execution runtime stats for cached operator input/output counts, with fallback to `operator_port_cache.tuple_count` when stats are missing
 
 **Cache usage updates**:

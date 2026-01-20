@@ -54,6 +54,28 @@
     </span>
   </div>
 
+  <nz-alert
+    *ngIf="invalidationNotice"
+    class="cache-panel__notice"
+    nzType="info"
+    nzShowIcon
+    nzCloseable
+    (nzOnClose)="clearInvalidationNotice()"
+    [nzMessage]="formatInvalidationMessage(invalidationNotice)"
+    [nzDescription]="formatInvalidationTimestamp(invalidationNotice)">
+  </nz-alert>
+
+  <nz-alert
+    *ngIf="manualClearNotice"
+    class="cache-panel__notice"
+    nzType="success"
+    nzShowIcon
+    nzCloseable
+    (nzOnClose)="clearManualClearNotice()"
+    [nzMessage]="formatManualClearMessage(manualClearNotice)"
+    [nzDescription]="formatManualClearTimestamp(manualClearNotice)">
+  </nz-alert>
+
   <nz-table
     nzSize="small"
     [nzSimple]="true"
