@@ -36,6 +36,7 @@ import org.apache.texera.web.model.websocket.response.{HeartBeatResponse, Modify
     new Type(value = classOf[ConsoleUpdateEvent]),
     new Type(value = classOf[CacheStatusUpdateEvent]),
     new Type(value = classOf[CacheUsageUpdateEvent]),
+    new Type(value = classOf[CacheEntryUpdateEvent]),
     new Type(value = classOf[PaginatedResultEvent]),
     new Type(value = classOf[PythonExpressionEvaluateResponse]),
     new Type(value = classOf[WorkerAssignmentUpdateEvent]),

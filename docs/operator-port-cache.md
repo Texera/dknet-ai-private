@@ -188,7 +188,7 @@ Entry point: `RegionExecutionCoordinator` constructor branches on `region.cached
 **Cache metadata UI (Implemented)**:
 
 - Left panel "Cache" tab listing workflow cache entries (physical op id, port id, tuple count, source execution id, updated_at, short subdag hash)
-- Highlight cache entries usable by the current execution (fingerprint match)
+- Highlight cache entries usable by the current execution (fingerprint + source execution id match)
 - Cache panel toggle to show only entries usable by the current execution
 - Cache panel action to clear all cached results (deletes cache entries, result documents, and port result records)
 - Output port labels show tuple counts, plus a second line with source execution id for cached outputs
@@ -202,15 +202,18 @@ Entry point: `RegionExecutionCoordinator` constructor branches on `region.cached
 - Context menu actions: "Clear cache" (selected operator) and "Clear cache up to this operator" (includes disabled operators and the selected operator)
 - Cache invalidation on compile: evict cache entries whose fingerprints no longer match the current workflow
 - Cache panel shows a notice when auto-invalidation removes entries after a compile
+- Cache panel toggle to enable or disable auto invalidation after compile
 - Cache panel shows a notice when users manually clear or evict cache entries (panel or context menu)
+- Cache panel auto-refreshes when cache entries are upserted or an execution completes
 - Compile endpoint accepts HashJoin join types (e.g., "full outer") to avoid 400s during invalidation
 - TODO: Use source execution runtime stats for cached operator input/output counts, with fallback to `operator_port_cache.tuple_count` when stats are missing
 
 **Cache usage updates**:
 
-- `CacheUsageUpdateEvent` publishes cached outputs usable by the current execution (fingerprint match)
-- Frontend uses the event to drive cache entry highlighting and per-port cache labels
+- `CacheUsageUpdateEvent` publishes cached outputs usable by the current execution (fingerprint + source execution id match)
+- Frontend uses the event to drive cache entry highlighting and per-port cache labels; matching includes source execution id to avoid treating new upserts as usable
 - Cache usage snapshots are re-emitted on websocket connect to keep labels visible after refresh
+- `CacheEntryUpdateEvent` is emitted when cached outputs are upserted during execution
 
 ### 5. Service & DAO Architecture
 
@@ -383,9 +386,9 @@ ExecutionCacheService ────→ upsertCachedOutput()     OperatorPortCache
   - Region visualization: blue fill (`rgba(24,144,255,0.3)`) for cached regions in `workflow-editor.component.ts`
   - Region visibility: shared state via `WorkflowActionService.showRegion` ensures correct visibility when regions are created during execution
 - **Cache metadata UI** (Phase 1.3 - Complete):
-  - `CacheUsageUpdateEvent` publishes cached outputs usable by the current execution (fingerprint match)
+  - `CacheUsageUpdateEvent` publishes cached outputs usable by the current execution (fingerprint + source execution id match)
   - Left panel "Cache" tab lists cache entries (physical op id, port id, tuple count, source execution id, updated_at, short subdag hash)
-  - Cache entries highlight when usable by the current execution (fingerprint match)
+  - Cache entries highlight when usable by the current execution (fingerprint + source execution id match)
   - Cache panel "Clear cache" action removes cached results and associated result artifacts
 - Cache panel can filter to only show entries usable by the current execution
   - Cached output ports show source execution id on a second label line
@@ -528,7 +531,7 @@ The cache system integrates with three layers:
 #### 1.3 Cache Metadata UI ✓ COMPLETE
 
 - [X] Add left panel "Cache" tab listing workflow cache entries (physical op id, port id, tuple count, source execution id, updated_at, short subdag hash)
-- [x] Highlight cache entries usable by the current execution (fingerprint match)
+- [x] Highlight cache entries usable by the current execution (fingerprint + source execution id match)
 - [X] Show per-output-port sourceExecutionId on a second output port label line
 - [X] Re-emit cache usage snapshots on websocket connect to refresh cache labels after reload
 - [X] Keep result URI hidden in the UI

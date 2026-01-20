@@ -38,6 +38,13 @@
       nzPopconfirmTitle="Remove all cached results for this workflow?">
       Clear cache
     </button>
+    <button
+      nz-button
+      nzSize="small"
+      nzType="default"
+      (click)="toggleAutoInvalidation()">
+      Auto invalidation: {{ autoInvalidationEnabled ? 'On' : 'Off' }}
+    </button>
     <label class="cache-panel__toggle">
       <nz-switch
         nzSize="small"

@@ -95,6 +95,11 @@ class WorkflowExecutionService(
       Iterable(CacheUsageUpdateEvent(newState.cachedOutputs))
     })
   )
+  addSubscription(
+    executionStateStore.cacheEntryUpdateStore.registerDiffHandler((_, newState) => {
+      newState.lastUpdate.toList
+    })
+  )
 
   private def createStateEvent(state: ExecutionMetadataStore): WorkflowStateEvent = {
     if (state.isRecovering && state.state != COMPLETED) {
@@ -185,7 +190,13 @@ class WorkflowExecutionService(
       new ExecutionReconfigurationService(client, executionStateStore, workflow)
     executionStatsService = new ExecutionStatsService(client, executionStateStore, workflow.context)
     executionCacheService =
-      new ExecutionCacheService(client, cacheService, workflow.context, workflow.physicalPlan)
+      new ExecutionCacheService(
+        client,
+        cacheService,
+        workflow.context,
+        workflow.physicalPlan,
+        executionStateStore
+      )
     executionRuntimeService = new ExecutionRuntimeService(
       client,
       executionStateStore,

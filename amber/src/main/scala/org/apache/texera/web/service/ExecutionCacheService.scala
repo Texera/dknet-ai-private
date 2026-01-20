@@ -20,25 +20,32 @@
 package org.apache.texera.web.service
 
 import com.typesafe.scalalogging.LazyLogging
-import org.apache.texera.amber.core.workflow.{PhysicalPlan, WorkflowContext}
+import org.apache.texera.amber.core.workflow.cache.FingerprintUtil
+import org.apache.texera.amber.core.workflow.{GlobalPortIdentity, PhysicalPlan, WorkflowContext}
 import org.apache.texera.amber.engine.architecture.controller.PortMaterialized
 import org.apache.texera.amber.engine.common.client.AmberClient
+import org.apache.texera.amber.util.serde.GlobalPortIdentitySerde.SerdeOps
 import org.apache.texera.web.SubscriptionManager
+import org.apache.texera.web.model.websocket.event.CacheEntryUpdateEvent
+import org.apache.texera.web.storage.{ExecutionCacheEntryUpdateStore, ExecutionStateStore}
 
 /**
   * Service that listens for port materialization events from the controller
-  * and persists cache metadata.
+  * and persists cache metadata. It also emits cache entry updates so the
+  * frontend can refresh cache info as new cached results appear.
   *
   * @param client AmberClient to register callbacks
   * @param cacheService OperatorPortCacheService for cache persistence
   * @param workflowContext WorkflowContext for workflow/execution IDs
   * @param physicalPlan PhysicalPlan for fingerprint computation
+  * @param executionStateStore Execution state store for cache entry updates
   */
 class ExecutionCacheService(
     client: AmberClient,
     cacheService: OperatorPortCacheService,
     workflowContext: WorkflowContext,
-    physicalPlan: PhysicalPlan
+    physicalPlan: PhysicalPlan,
+    executionStateStore: ExecutionStateStore
 ) extends SubscriptionManager
     with LazyLogging {
 
@@ -60,11 +67,32 @@ class ExecutionCacheService(
               evt.resultUri,
               evt.tupleCount
             )
+            emitCacheEntryUpdate(evt.portId, evt.tupleCount)
           } catch {
             case e: Throwable =>
               logger.error(s"Failed to upsert cache for port ${evt.portId}", e)
           }
         })
+    )
+  }
+
+  /**
+    * Emits a cache entry update after a cache upsert so websocket clients
+    * can refresh cache metadata for the current execution.
+    */
+  private def emitCacheEntryUpdate(
+      portId: GlobalPortIdentity,
+      tupleCount: Option[Long]
+  ): Unit = {
+    val fingerprint = FingerprintUtil.computeSubdagFingerprint(physicalPlan, portId)
+    val updateEvent = CacheEntryUpdateEvent(
+      globalPortId = portId.serializeAsString,
+      subdagHash = fingerprint.subdagHash,
+      tupleCount = tupleCount,
+      sourceExecutionId = workflowContext.executionId.id
+    )
+    executionStateStore.cacheEntryUpdateStore.updateState(_ =>
+      ExecutionCacheEntryUpdateStore(Some(updateEvent), System.currentTimeMillis())
     )
   }
 }

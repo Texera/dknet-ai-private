@@ -449,7 +449,7 @@ export class JointUIService {
   }
 
   /**
-   * Updates cached output port indicator rings without changing counts or labels.
+   * Updates cached output port indicator badges without changing counts or labels.
    */
   public changeOperatorCachedPorts(
     jointPaper: joint.dia.Paper,
@@ -717,7 +717,8 @@ export class JointUIService {
   /**
    * This function changes the default svg of the operator ports.
    * It hides the port label that will display 'out/in' beside the operators.
-   * Port labels remain visible for per-port metrics and cache metadata.
+   * Port labels remain visible for per-port metrics and cache metadata, and cached
+   * output ports show a small badge that never captures pointer events so ports stay interactive.
    *
    * @returns the custom attributes of the ports
    */
@@ -727,13 +728,15 @@ export class JointUIService {
         fill: "#A0A0A0",
         r: 5,
         stroke: "none",
+        "pointer-events": "all",
       },
       ".port-cache-indicator": {
-        fill: "none",
-        r: 7,
-        stroke: "#1890ff",
-        "stroke-width": 1.5,
+        fill: "#fadb14",
+        points: "0,-12 4,-9 0,-6 -4,-9",
+        stroke: "#ad8b00",
+        "stroke-width": 1,
         display: "none",
+        "pointer-events": "none",
       },
       ".port-label": {
         visibility: "visible",
@@ -743,27 +746,31 @@ export class JointUIService {
         ref: ".port-body",
         "ref-y": 0.5,
         "y-alignment": "middle",
+        "pointer-events": "none",
       },
     };
   }
 
   /**
-   * Defines the default markup for ports.
+   * Defines the default markup for ports, including the cache badge and port body.
    */
   public static getCustomPortMarkup(): any[] {
     return [
       {
         tagName: "circle",
-        selector: ".port-cache-indicator",
-        attributes: {
-          class: "port-cache-indicator",
-        },
-      },
-      {
-        tagName: "circle",
         selector: ".port-body",
         attributes: {
           class: "port-body",
+          magnet: true,
+        },
+      },
+      {
+        tagName: "polygon",
+        selector: ".port-cache-indicator",
+        attributes: {
+          class: "port-cache-indicator",
+          magnet: false,
+          "pointer-events": "none",
         },
       },
     ];
@@ -779,6 +786,7 @@ export class JointUIService {
         selector: ".port-label",
         attributes: {
           class: "port-label",
+          "pointer-events": "none",
         },
       },
       {
@@ -786,6 +794,7 @@ export class JointUIService {
         selector: ".port-cache-label",
         attributes: {
           class: "port-cache-label",
+          "pointer-events": "none",
         },
       },
     ];

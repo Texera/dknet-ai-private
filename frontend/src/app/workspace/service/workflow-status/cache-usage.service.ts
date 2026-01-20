@@ -68,9 +68,11 @@ export class CacheUsageService {
 
   /**
    * Builds a stable key to match cache entries against cache usage updates.
+   * Includes the source execution to avoid tagging replaced cache entries as usable.
    */
-  public buildUsageKey(globalPortId: string, subdagHash: string): string {
-    return `${globalPortId}|${subdagHash}`;
+  public buildUsageKey(globalPortId: string, subdagHash: string, sourceExecutionId?: number): string {
+    const executionToken = sourceExecutionId == null ? "unknown" : sourceExecutionId.toString();
+    return `${globalPortId}|${subdagHash}|${executionToken}`;
   }
 
   private registerCacheUsageListener(): void {

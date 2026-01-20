@@ -185,7 +185,30 @@ export class WorkflowEditorComponent implements OnInit, AfterViewInit, OnDestroy
     magnet: SVGElement,
     event: joint.dia.Event
   ): boolean {
-    return magnet && magnet.getAttribute("port-group") === "out";
+    const portGroup = WorkflowEditorComponent.getMagnetAttribute(magnet, "port-group");
+    return portGroup === "out";
+  }
+
+  /**
+   * Resolves a port attribute from a magnet or its nearest port element.
+   * This keeps port interactions working even when ports have extra markup.
+   */
+  private static getMagnetAttribute(
+    magnet: SVGElement | null | undefined,
+    attribute: "port" | "port-group"
+  ): string | null {
+    if (!magnet) {
+      return null;
+    }
+    const direct = magnet.getAttribute(attribute);
+    if (direct) {
+      return direct;
+    }
+    const closest = magnet.closest(`[${attribute}]`);
+    if (closest instanceof SVGElement) {
+      return closest.getAttribute(attribute);
+    }
+    return null;
   }
 
   ngAfterViewInit() {
@@ -976,9 +999,14 @@ export class WorkflowEditorComponent implements OnInit, AfterViewInit, OnDestroy
         // set the multi-select mode
         this.wrapper.setMultiSelectMode(<boolean>event[1].shiftKey);
 
+        const portID = WorkflowEditorComponent.getMagnetAttribute(event[2] as SVGElement, "port");
+        if (!portID) {
+          return;
+        }
+
         const clickedPortID: LogicalPort = {
           operatorID: event[0].model.id as string,
-          portID: event[2].getAttribute("port") as string,
+          portID: portID,
         };
 
         if (event[1].shiftKey) {
@@ -1090,20 +1118,23 @@ export class WorkflowEditorComponent implements OnInit, AfterViewInit, OnDestroy
     end: joint.dia.LinkEnd,
     linkView: joint.dia.LinkView
   ): boolean {
+    const sourcePortGroup = WorkflowEditorComponent.getMagnetAttribute(sourceMagnet, "port-group");
+    const targetPortGroup = WorkflowEditorComponent.getMagnetAttribute(targetMagnet, "port-group");
+
     // user cannot draw connection starting from the input port (left side)
-    if (sourceMagnet && sourceMagnet.getAttribute("port-group") === "in") {
+    if (sourcePortGroup === "in") {
       return false;
     }
 
     // user cannot connect to the output port (right side)
-    if (targetMagnet && targetMagnet.getAttribute("port-group") === "out") {
+    if (targetPortGroup === "out") {
       return false;
     }
 
     const sourceCellID = sourceView.model.id.toString();
-    const sourcePortID = sourceMagnet?.getAttribute("port");
+    const sourcePortID = WorkflowEditorComponent.getMagnetAttribute(sourceMagnet, "port");
     const targetCellID = targetView.model.id.toString();
-    const targetPortID = targetMagnet?.getAttribute("port");
+    const targetPortID = WorkflowEditorComponent.getMagnetAttribute(targetMagnet, "port");
 
     return this.validateOperatorConnection(sourceCellID, sourcePortID, targetCellID, targetPortID);
   }

@@ -22,7 +22,9 @@ import { ActivatedRoute } from "@angular/router";
 import { finalize, tap } from "rxjs/operators";
 import { UntilDestroy, untilDestroyed } from "@ngneat/until-destroy";
 import { WorkflowCacheEntry } from "../../../../dashboard/type/workflow-cache-entry";
+import { ExecuteWorkflowService } from "../../../service/execute-workflow/execute-workflow.service";
 import { CacheUsageService } from "../../../service/workflow-status/cache-usage.service";
+import { ExecutionState } from "../../../types/execute-workflow.interface";
 import {
   CacheInvalidationNotice,
   CacheManualClearNotice,
@@ -44,6 +46,8 @@ export class CachePanelComponent implements OnInit {
   public visibleEntries: WorkflowCacheEntry[] = [];
   /** When true, only cache entries usable by the current execution are shown. */
   public showUsableOnly = false;
+  /** When true, auto invalidation runs after successful compilation. */
+  public autoInvalidationEnabled = true;
   /** True while the cache eviction request is in flight. */
   public removing = false;
   public loading = false;
@@ -57,6 +61,7 @@ export class CachePanelComponent implements OnInit {
   constructor(
     private cacheEntriesService: WorkflowCacheEntriesService,
     private cacheUsageService: CacheUsageService,
+    private executeWorkflowService: ExecuteWorkflowService,
     private route: ActivatedRoute
   ) {}
 
@@ -85,7 +90,13 @@ export class CachePanelComponent implements OnInit {
       .pipe(untilDestroyed(this))
       .subscribe(entries => {
         this.usageKeys = new Set(
-          entries.map(entry => this.cacheUsageService.buildUsageKey(entry.globalPortId, entry.subdagHash))
+          entries.map(entry =>
+            this.cacheUsageService.buildUsageKey(
+              entry.globalPortId,
+              entry.subdagHash,
+              entry.sourceExecutionId
+            )
+          )
         );
         this.updateVisibleEntries();
       });
@@ -107,6 +118,20 @@ export class CachePanelComponent implements OnInit {
           this.manualClearNotice = notice;
         } else if (!notice) {
           this.manualClearNotice = undefined;
+        }
+      });
+    this.cacheEntriesService
+      .getAutoInvalidationEnabledStream()
+      .pipe(untilDestroyed(this))
+      .subscribe(enabled => {
+        this.autoInvalidationEnabled = enabled;
+      });
+    this.executeWorkflowService
+      .getExecutionStateStream()
+      .pipe(untilDestroyed(this))
+      .subscribe(({ current }) => {
+        if (current.state === ExecutionState.Completed) {
+          this.refresh();
         }
       });
   }
@@ -153,11 +178,17 @@ export class CachePanelComponent implements OnInit {
   }
 
   /**
-   * Returns true when a cache entry is usable by the current execution (fingerprint match),
-   * regardless of whether the scheduler chooses to reuse it.
+   * Returns true when a cache entry is usable by the current execution
+   * (fingerprint and source execution match), regardless of whether the scheduler chooses to reuse it.
    */
   public isUsableForExecution(entry: WorkflowCacheEntry): boolean {
-    return this.usageKeys.has(this.cacheUsageService.buildUsageKey(entry.globalPortId, entry.subdagHash));
+    return this.usageKeys.has(
+      this.cacheUsageService.buildUsageKey(
+        entry.globalPortId,
+        entry.subdagHash,
+        entry.sourceExecutionId
+      )
+    );
   }
 
   /**
@@ -167,6 +198,13 @@ export class CachePanelComponent implements OnInit {
     this.visibleEntries = this.showUsableOnly
       ? this.cacheEntries.filter(entry => this.isUsableForExecution(entry))
       : this.cacheEntries;
+  }
+
+  /**
+   * Toggles auto invalidation of cached results after compilation.
+   */
+  public toggleAutoInvalidation(): void {
+    this.cacheEntriesService.toggleAutoInvalidation();
   }
 
   /**

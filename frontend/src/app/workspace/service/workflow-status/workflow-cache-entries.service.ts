@@ -19,9 +19,10 @@
 
 import { Injectable } from "@angular/core";
 import { BehaviorSubject, Observable } from "rxjs";
-import { finalize, tap } from "rxjs/operators";
+import { auditTime, finalize, tap } from "rxjs/operators";
 import { WorkflowExecutionsService } from "../../../dashboard/service/user/workflow-executions/workflow-executions.service";
 import { WorkflowCacheEntry } from "../../../dashboard/type/workflow-cache-entry";
+import { WorkflowWebsocketService } from "../workflow-websocket/workflow-websocket.service";
 import { WorkflowActionService } from "../workflow-graph/model/workflow-action.service";
 
 export interface CacheInvalidationNotice {
@@ -48,10 +49,13 @@ export class WorkflowCacheEntriesService {
   private readonly loadingSubject = new BehaviorSubject<boolean>(false);
   private readonly invalidationNoticeSubject = new BehaviorSubject<CacheInvalidationNotice | undefined>(undefined);
   private readonly manualClearNoticeSubject = new BehaviorSubject<CacheManualClearNotice | undefined>(undefined);
+  /** Whether compile-time cache invalidation should run automatically. */
+  private readonly autoInvalidationEnabledSubject = new BehaviorSubject<boolean>(true);
   private currentWorkflowId?: number;
 
   constructor(
     private workflowExecutionsService: WorkflowExecutionsService,
+    private workflowWebsocketService: WorkflowWebsocketService,
     private workflowActionService: WorkflowActionService
   ) {
     this.workflowActionService.workflowMetaDataChanged().subscribe(metadata => {
@@ -73,6 +77,15 @@ export class WorkflowCacheEntriesService {
       this.currentWorkflowId = initialWorkflowId;
       this.refreshCacheEntries(initialWorkflowId).subscribe();
     }
+
+    this.workflowWebsocketService
+      .subscribeToEvent("CacheEntryUpdateEvent")
+      .pipe(auditTime(250))
+      .subscribe(() => {
+        if (this.currentWorkflowId && this.currentWorkflowId > 0) {
+          this.refreshCacheEntries(this.currentWorkflowId).subscribe();
+        }
+      });
   }
 
   /**
@@ -104,10 +117,38 @@ export class WorkflowCacheEntriesService {
   }
 
   /**
+   * Returns a stream of the auto-invalidation toggle state.
+   */
+  public getAutoInvalidationEnabledStream(): Observable<boolean> {
+    return this.autoInvalidationEnabledSubject.asObservable();
+  }
+
+  /**
    * Returns the latest cache entry snapshot.
    */
   public getCacheEntriesSnapshot(): ReadonlyArray<WorkflowCacheEntry> {
     return this.cacheEntriesSubject.value;
+  }
+
+  /**
+   * Returns true when auto invalidation on compile is enabled.
+   */
+  public isAutoInvalidationEnabled(): boolean {
+    return this.autoInvalidationEnabledSubject.value;
+  }
+
+  /**
+   * Updates the auto-invalidation toggle state.
+   */
+  public setAutoInvalidationEnabled(enabled: boolean): void {
+    this.autoInvalidationEnabledSubject.next(enabled);
+  }
+
+  /**
+   * Flips the auto-invalidation toggle state.
+   */
+  public toggleAutoInvalidation(): void {
+    this.setAutoInvalidationEnabled(!this.autoInvalidationEnabledSubject.value);
   }
 
   /**
