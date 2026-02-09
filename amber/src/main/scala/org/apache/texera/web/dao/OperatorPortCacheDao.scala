@@ -156,7 +156,7 @@ class OperatorPortCacheDao(sqlServer: SqlServer) {
 
   /**
     * Insert or update a cache entry (upsert).
-    * On conflict (workflow_id, global_port_id, subdag_hash), updates the existing record.
+    * On conflict (workflow_id, global_port_id, subdag_hash), updates the existing record and refreshes updated_at.
     *
     * @param record OperatorPortCacheRecord to insert/update
     */
@@ -183,6 +183,7 @@ class OperatorPortCacheDao(sqlServer: SqlServer) {
       .set(OPERATOR_PORT_CACHE.FINGERPRINT_JSON, dbRecord.getFingerprintJson)
       .set(OPERATOR_PORT_CACHE.TUPLE_COUNT, dbRecord.getTupleCount)
       .set(OPERATOR_PORT_CACHE.SOURCE_EXECUTION_ID, dbRecord.getSourceExecutionId)
+      .set(OPERATOR_PORT_CACHE.UPDATED_AT, DSL.currentOffsetDateTime())
       .execute()
   }
 

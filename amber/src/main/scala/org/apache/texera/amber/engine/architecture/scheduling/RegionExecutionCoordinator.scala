@@ -50,6 +50,7 @@ import org.apache.texera.amber.engine.architecture.scheduling.config.{
   InputPortConfig,
   OperatorConfig,
   OutputPortConfig,
+  PortConfig,
   ResourceConfig
 }
 import org.apache.texera.amber.engine.architecture.sendsemantics.partitionings.Partitioning
@@ -140,8 +141,9 @@ class RegionExecutionCoordinator(
       val outputMetrics = resourceConfig.portConfigs
         .collect {
           case (gpid, cfg: OutputPortConfig) if gpid.opId == op.id =>
-            // Only emit metrics for materialized outputs; UI treats missing ports as skipped.
-            val count = cfg.cachedTupleCount.getOrElse(0L)
+            // Emit metrics only for configured output ports in this cached region.
+            // Use -1 to preserve unknown cached counts in UI/stats instead of reporting 0.
+            val count = cfg.cachedTupleCount.getOrElse(-1L)
             PortTupleMetricsMapping(gpid.portId, TupleMetrics(count, 0L))
         }
         .toSeq
@@ -317,10 +319,12 @@ class RegionExecutionCoordinator(
 
   private def executeNonDependeePortPhase(): Future[Unit] = {
     setPhase(ExecutingNonDependeePortsPhase)
-    // Allocate output port storage objects
+    // Register reuse-only output bindings (cache-hit ports) without creating new storage objects.
+    registerReuseOnlyOutputPortResults(region.resourceConfig.get.portConfigs)
+    // Allocate output port storage objects for fresh materializations only.
     region.resourceConfig.get.portConfigs
       .collect {
-        case (id, cfg: OutputPortConfig) => id -> cfg
+        case (id, cfg: OutputPortConfig) if cfg.materialize => id -> cfg
       }
       .foreach {
         case (pid, cfg) =>
@@ -502,7 +506,7 @@ class RegionExecutionCoordinator(
                             if gid == GlobalPortIdentity(
                               opId = physicalOp.id,
                               portId = outputPortId
-                            ) =>
+                            ) && cfg.materialize =>
                           cfg.storageURI.toString
                       }
                       .getOrElse("")
@@ -536,6 +540,25 @@ class RegionExecutionCoordinator(
         }
         .toSeq
     )
+  }
+
+  /**
+    * Persists result URI bindings for reuse-only output ports so consumers and UI can
+    * resolve cached results in the current execution without rematerialization.
+    */
+  private def registerReuseOnlyOutputPortResults(
+      portConfigs: Map[GlobalPortIdentity, PortConfig]
+  ): Unit = {
+    portConfigs.foreach {
+      case (outputPortId, outputCfg: OutputPortConfig)
+          if !outputPortId.input && !outputCfg.materialize =>
+        WorkflowExecutionsResource.insertOperatorPortResultUri(
+          eid = executionId,
+          globalPortId = outputPortId,
+          uri = outputCfg.storageURI
+        )
+      case _ =>
+    }
   }
 
   private def connectChannels(links: Set[PhysicalLink]): Future[Seq[EmptyReturn]] = {

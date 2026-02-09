@@ -33,6 +33,7 @@ import org.apache.texera.amber.engine.architecture.rpc.controlcommands.{
   QueryStatisticsRequest
 }
 import org.apache.texera.amber.engine.architecture.rpc.controlreturns.EmptyReturn
+import org.apache.texera.amber.engine.architecture.scheduling.config.OutputPortConfig
 import org.apache.texera.amber.engine.common.virtualidentity.util.CONTROLLER
 import org.apache.texera.amber.util.VirtualIdentityUtils
 import org.apache.texera.web.resource.dashboard.user.workflow.WorkflowExecutionsResource
@@ -84,20 +85,27 @@ trait PortCompletedHandler {
             if (isPortCompleted) {
               // If this is an output port and materialized, notify client (for cache upsert).
               if (!msg.input) {
-                val storageUriOpt =
-                  WorkflowExecutionsResource.getResultUriByPhysicalPortId(
-                    cp.workflowContext.executionId,
-                    globalPortId
-                  )
-                storageUriOpt.foreach { uri =>
-                  // Prefer runtime statistics over storage reads for tuple counts.
-                  val tupleCount = operatorExecution
-                    .getStats
-                    .operatorStatistics
-                    .outputMetrics
-                    .find(_.portId == msg.portId)
-                    .map(_.tupleMetrics.count)
-                  sendToClient(PortMaterialized(globalPortId, uri, tupleCount))
+                val isMaterializedOutput = region.resourceConfig
+                  .flatMap(_.portConfigs.get(globalPortId))
+                  .collect { case cfg: OutputPortConfig => cfg.materialize }
+                  .getOrElse(false)
+
+                if (isMaterializedOutput) {
+                  val storageUriOpt =
+                    WorkflowExecutionsResource.getResultUriByPhysicalPortId(
+                      cp.workflowContext.executionId,
+                      globalPortId
+                    )
+                  storageUriOpt.foreach { uri =>
+                    // Prefer runtime statistics over storage reads for tuple counts.
+                    val tupleCount = operatorExecution
+                      .getStats
+                      .operatorStatistics
+                      .outputMetrics
+                      .find(_.portId == msg.portId)
+                      .map(_.tupleMetrics.count)
+                    sendToClient(PortMaterialized(globalPortId, uri, tupleCount))
+                  }
                 }
               }
 

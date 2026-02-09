@@ -29,8 +29,8 @@ import org.apache.texera.amber.engine.architecture.scheduling.config.{
   OutputPortConfig,
   ResourceConfig
 }
-import org.apache.amber.engine.common.AmberLogging
-import org.apache.amber.util.serde.GlobalPortIdentitySerde
+import org.apache.texera.amber.engine.common.AmberLogging
+import org.apache.texera.amber.util.serde.GlobalPortIdentitySerde
 import org.jgrapht.Graph
 import org.jgrapht.alg.connectivity.BiconnectivityInspector
 import org.jgrapht.graph.{DirectedAcyclicGraph, DirectedPseudograph}
@@ -63,6 +63,19 @@ class CostBasedScheduleGenerator(
       numStatesExplored: Int = 0
   )
 
+  /**
+    * Deterministic cache-aware propagation result under Assumption III (forced cache use).
+    */
+  private case class RequirednessAnalysis(
+      requiredSeedPorts: Set[GlobalPortIdentity],
+      requiredOutputPorts: Set[GlobalPortIdentity],
+      executeOperators: Set[PhysicalOpIdentity],
+      freshRequiredOutputPorts: Set[GlobalPortIdentity],
+      cacheHitRequiredOutputPorts: Set[GlobalPortIdentity],
+      freshRequiredLinks: Set[PhysicalLink],
+      cacheFedLinks: Set[PhysicalLink]
+  )
+
   private val costEstimator =
     new DefaultCostEstimator(
       workflowContext = workflowContext,
@@ -76,6 +89,30 @@ class CostBasedScheduleGenerator(
         GlobalPortIdentitySerde.deserializeFromString(serializedId) -> cachedOutput
     }
 
+  /**
+    * Search-time planning bindings applied during region construction.
+    *
+    * @param visibleFreshOutputPorts visible/sink output ports that must be freshly materialized.
+    * @param reuseOnlyOutputsByPort output ports that are required but must be served from cache (no rematerialization).
+    * @param cacheFedInputUrisByPort input ports pre-bound to cached upstream URIs.
+    */
+  private case class PlanningBindings(
+      visibleFreshOutputPorts: Set[GlobalPortIdentity],
+      reuseOnlyOutputsByPort: Map[GlobalPortIdentity, CachedOutput],
+      cacheFedInputUrisByPort: Map[GlobalPortIdentity, List[URI]]
+  )
+
+  private object PlanningBindings {
+    val empty: PlanningBindings = PlanningBindings(
+      visibleFreshOutputPorts = Set.empty,
+      reuseOnlyOutputsByPort = Map.empty,
+      cacheFedInputUrisByPort = Map.empty
+    )
+  }
+
+  private var activePlanningPlan: PhysicalPlan = initialPhysicalPlan
+  private var activePlanningBindings: PlanningBindings = PlanningBindings.empty
+
   private case class CostEstimatorMemoKey(
       physicalOpIds: Set[PhysicalOpIdentity],
       physicalLinkIds: Set[PhysicalLink],
@@ -83,173 +120,275 @@ class CostBasedScheduleGenerator(
       resourceConfig: Option[ResourceConfig]
   )
 
-  /**
-    * Classify regions as cached vs must-execute and rebuild port configs accordingly.
-    * A region is must-execute if it has a visible port without cache, or if it feeds a region
-    * that needs a materialization without cache (propagated upstream).
-    */
-  private def annotateRegionsWithCacheInfo(
-      regionDAG: DirectedAcyclicGraph[Region, RegionLink],
-      matEdges: Set[PhysicalLink],
-      opToRegionMap: Map[PhysicalOpIdentity, Region]
-  ): Unit = {
-    val regions = regionDAG.vertexSet().asScala.toSet
-
-    val needsByRegion = computePortsNeedingStorage(regions, matEdges, opToRegionMap)
-    val mustExecute = computeMustExecuteRegions(needsByRegion, matEdges, opToRegionMap)
-    val cachedRegions = regions.diff(mustExecute)
-    val outputConfigByPort = buildOutputPortConfigs(needsByRegion, cachedRegions)
-    val inputConfigByPort = buildInputPortConfigs(matEdges, outputConfigByPort)
-
-    // Rebuild each region with refreshed port configs and cached flag.
-    regions.foreach { region =>
-      val outputCfgs = needsByRegion(region).map(pid => pid -> outputConfigByPort(pid)).toMap
-      val inputCfgs = inputConfigByPort.filter { case (pid, _) => region.ports.contains(pid) }
-      val portConfigs = outputCfgs ++ inputCfgs
-      val newResourceConfig =
-        if (portConfigs.nonEmpty) Some(ResourceConfig(portConfigs = portConfigs))
-        else region.resourceConfig
-
-      val newRegion = region.copy(
-        resourceConfig = newResourceConfig,
-        cached = cachedRegions.contains(region)
-      )
-      replaceVertex(regionDAG, region, newRegion)
-    }
-  }
-
-  private def computePortsNeedingStorage(
-      regions: Set[Region],
-      matEdges: Set[PhysicalLink],
-      opToRegionMap: Map[PhysicalOpIdentity, Region]
-  ): Map[Region, Set[GlobalPortIdentity]] = {
-    // Ports that require materialization for this run: scheduler-imposed (matEdges) + UI-visible ports.
-    regions.map { region =>
-      val fromMatEdges = matEdges
-        .filter(e => opToRegionMap(e.fromOpId) == region)
-        .map(e => GlobalPortIdentity(e.fromOpId, e.fromPortId))
-      val visiblePorts = workflowContext.workflowSettings.outputPortsNeedingStorage
-        .filter(pid => region.physicalOps.exists(_.id == pid.opId))
-      region -> (fromMatEdges ++ visiblePorts)
-    }.toMap
-  }
-
-  private def computeMustExecuteRegions(
-      needsByRegion: Map[Region, Set[GlobalPortIdentity]],
-      matEdges: Set[PhysicalLink],
-      opToRegionMap: Map[PhysicalOpIdentity, Region]
-  ): Set[Region] = {
-    // Seed with regions that have any needed port lacking cache; then propagate upstream along materialized edges.
-    val mustExecute = mutable.Set[Region]()
-    needsByRegion.foreach {
-      case (region, needs) =>
-        if (needs.exists(pid => !cachedOutputsByPort.contains(pid))) {
-          mustExecute += region
-        }
-    }
-    var changed = true
-    while (changed) {
-      changed = false
-      matEdges.foreach { e =>
-        val fromRegion = opToRegionMap(e.fromOpId)
-        val toRegion = opToRegionMap(e.toOpId)
-        val outPort = GlobalPortIdentity(e.fromOpId, e.fromPortId)
-        if (
-          mustExecute.contains(toRegion) &&
-          !cachedOutputsByPort.contains(outPort) &&
-          !mustExecute.contains(fromRegion)
-        ) {
-          mustExecute += fromRegion
-          changed = true
-        }
-      }
-    }
-    mustExecute.toSet
-  }
-
-  private def buildOutputPortConfigs(
-      needsByRegion: Map[Region, Set[GlobalPortIdentity]],
-      cachedRegions: Set[Region]
-  ): Map[GlobalPortIdentity, OutputPortConfig] = {
-    // For cached regions, reuse cached URI + tuple count; otherwise allocate new URI with no cached count.
-    needsByRegion.flatMap {
-      case (region, ports) =>
-        ports.map { gpid =>
-          val (uri, cachedCount) =
-            if (cachedRegions.contains(region)) {
-              val cached = cachedOutputsByPort(gpid)
-              (cached.resultUri, cached.tupleCount)
-            } else {
-              (
-                createResultURI(
-                  workflowId = workflowContext.workflowId,
-                  executionId = workflowContext.executionId,
-                  globalPortId = gpid
-                ),
-                None
-              )
-            }
-          gpid -> OutputPortConfig(uri, cachedCount)
-        }
-    }
-  }
-
-  private def buildInputPortConfigs(
-      matEdges: Set[PhysicalLink],
-      outputConfigByPort: Map[GlobalPortIdentity, OutputPortConfig]
-  ): Map[GlobalPortIdentity, IntermediateInputPortConfig] = {
-    matEdges
-      .groupBy(e => GlobalPortIdentity(e.toOpId, e.toPortId, input = true))
-      .map {
-        case (inputPid, links) =>
-          val uris = links
-            .map(link =>
-              outputConfigByPort(GlobalPortIdentity(link.fromOpId, link.fromPortId)).storageURI
-            )
-            .toList
-          inputPid -> IntermediateInputPortConfig(uris)
-      }
-  }
-
   private val costEstimatorMemoization
       : mutable.Map[CostEstimatorMemoKey, (ResourceConfig, Double)] =
     new mutable.HashMap()
 
   def generate(): (Schedule, PhysicalPlan) = {
     val startTime = System.nanoTime()
-    val regionDAG = createRegionDAG()
+    val analysis = analyzeRequiredness(initialPhysicalPlan)
+
+    val executeRegionDAG = new DirectedAcyclicGraph[Region, RegionLink](classOf[RegionLink])
+    if (analysis.executeOperators.nonEmpty) {
+      val residualPlan = buildResidualPlan(
+        initialPhysicalPlan,
+        analysis.executeOperators,
+        analysis.freshRequiredLinks
+      )
+      val residualBindings = buildResidualPlanningBindings(residualPlan, analysis)
+      val searchResult = searchOnPlan(residualPlan, residualBindings)
+      searchResult.regionDAG.vertexSet().forEach(region => executeRegionDAG.addVertex(region))
+      searchResult.regionDAG
+        .edgeSet()
+        .forEach(edge =>
+          executeRegionDAG.addEdge(
+            searchResult.regionDAG.getEdgeSource(edge),
+            searchResult.regionDAG.getEdgeTarget(edge),
+            edge
+          )
+        )
+    }
+
+    val skipRegions = buildSkipRegions(initialPhysicalPlan, analysis)
+    val finalRegionPlan = buildFinalRegionPlan(executeRegionDAG, skipRegions)
     val totalRPGTime = System.nanoTime() - startTime
-    val regionPlan = RegionPlan(
-      regions = regionDAG.iterator().asScala.toSet,
-      regionLinks = regionDAG.edgeSet().asScala.toSet
-    )
-    val schedule = generateScheduleFromRegionPlan(regionPlan)
+    val schedule = generateScheduleFromRegionPlan(finalRegionPlan)
     logger.info(
       s"WID: ${workflowContext.workflowId.id}, EID: ${workflowContext.executionId.id}, total RPG time: " +
         s"${totalRPGTime / 1e6} ms."
     )
     (
       schedule,
-      physicalPlan
+      initialPhysicalPlan
     )
   }
 
   /**
-    * Partitions a physical plan into Regions (skeletons). Cache vs must-execute
-    * classification and URI assignment are applied later in annotateRegionsWithCacheInfo
-    * using the RegionDAG and materialization edges.
+    * Computes deterministic requiredness and execute/skip decisions under Assumption III (forced cache use).
+    */
+  private def analyzeRequiredness(plan: PhysicalPlan): RequirednessAnalysis = {
+    val requiredSeeds =
+      workflowContext.workflowSettings.outputPortsNeedingStorage
+        .filter(pid => plan.operators.exists(_.id == pid.opId))
+
+    val requiredOutputPorts = mutable.Set[GlobalPortIdentity]()
+    requiredOutputPorts ++= requiredSeeds
+    val executeOperators = mutable.Set[PhysicalOpIdentity]()
+
+    var changed = true
+    while (changed) {
+      changed = false
+      plan.topologicalIterator().foreach { opId =>
+        val op = plan.getOperator(opId)
+        val requiredOutputsOfOp =
+          op.outputPorts.keys
+            .map(portId => GlobalPortIdentity(op.id, portId))
+            .filter(requiredOutputPorts.contains)
+            .toSet
+        if (requiredOutputsOfOp.nonEmpty) {
+          val hasCacheMiss = requiredOutputsOfOp.exists(pid => !cachedOutputsByPort.contains(pid))
+          if (hasCacheMiss) {
+            if (!executeOperators.contains(opId)) {
+              executeOperators += opId
+              changed = true
+            }
+            plan.getUpstreamPhysicalLinks(opId).foreach { link =>
+              val upstreamOutput = GlobalPortIdentity(link.fromOpId, link.fromPortId)
+              if (!requiredOutputPorts.contains(upstreamOutput)) {
+                requiredOutputPorts += upstreamOutput
+                changed = true
+              }
+            }
+          }
+        }
+      }
+    }
+
+    val freshRequiredOutputPorts =
+      requiredOutputPorts.filter(pid => !cachedOutputsByPort.contains(pid)).toSet
+    val cacheHitRequiredOutputPorts =
+      requiredOutputPorts.filter(cachedOutputsByPort.contains).toSet
+    val linksIntoExecute = plan.links.filter(link => executeOperators.contains(link.toOpId))
+    val freshRequiredLinks = linksIntoExecute
+      .filter(link =>
+        freshRequiredOutputPorts.contains(GlobalPortIdentity(link.fromOpId, link.fromPortId))
+      )
+      .toSet
+    val cacheFedLinks = linksIntoExecute
+      .filter(link =>
+        cacheHitRequiredOutputPorts.contains(GlobalPortIdentity(link.fromOpId, link.fromPortId))
+      )
+      .toSet
+
+    RequirednessAnalysis(
+      requiredSeedPorts = requiredSeeds,
+      requiredOutputPorts = requiredOutputPorts.toSet,
+      executeOperators = executeOperators.toSet,
+      freshRequiredOutputPorts = freshRequiredOutputPorts,
+      cacheHitRequiredOutputPorts = cacheHitRequiredOutputPorts,
+      freshRequiredLinks = freshRequiredLinks,
+      cacheFedLinks = cacheFedLinks
+    )
+  }
+
+  /**
+    * Builds a residual plan containing only execute operators and fresh-required dependencies.
+    */
+  private def buildResidualPlan(
+      plan: PhysicalPlan,
+      executeOperators: Set[PhysicalOpIdentity],
+      freshRequiredLinks: Set[PhysicalLink]
+  ): PhysicalPlan = {
+    val linksToRemove = plan.links.diff(freshRequiredLinks)
+    val linksPrunedPlan = linksToRemove.foldLeft(plan)((acc, link) => acc.removeLink(link))
+    linksPrunedPlan.getSubPlan(executeOperators)
+  }
+
+  /**
+    * Builds the search-time binding context for residual Pasta planning.
+    * All bindings are prepared before search and consumed directly by createRegions.
+    */
+  private def buildResidualPlanningBindings(
+      residualPlan: PhysicalPlan,
+      analysis: RequirednessAnalysis
+  ): PlanningBindings = {
+    val residualOps = residualPlan.operators.map(_.id).toSet
+
+    val visibleFreshOutputPorts = analysis.requiredSeedPorts
+      .intersect(analysis.freshRequiredOutputPorts)
+      .filter(pid => residualOps.contains(pid.opId))
+
+    val reuseOnlyOutputsByPort = analysis.cacheHitRequiredOutputPorts
+      .filter(pid => residualOps.contains(pid.opId))
+      .flatMap(pid => cachedOutputsByPort.get(pid).map(cached => pid -> cached))
+      .toMap
+
+    val cacheFedInputUrisByPort = analysis.cacheFedLinks
+      .filter(link => residualOps.contains(link.toOpId))
+      .foldLeft(Map.empty[GlobalPortIdentity, List[URI]]) {
+        case (acc, link) =>
+          val inputPort = GlobalPortIdentity(link.toOpId, link.toPortId, input = true)
+          val outputPort = GlobalPortIdentity(link.fromOpId, link.fromPortId)
+          cachedOutputsByPort.get(outputPort) match {
+            case Some(cached) =>
+              val uris = acc.getOrElse(inputPort, List.empty) :+ cached.resultUri
+              acc.updated(inputPort, uris)
+            case None =>
+              acc
+          }
+      }
+
+    PlanningBindings(
+      visibleFreshOutputPorts = visibleFreshOutputPorts,
+      reuseOnlyOutputsByPort = reuseOnlyOutputsByPort,
+      cacheFedInputUrisByPort = cacheFedInputUrisByPort
+    )
+  }
+
+  /**
+    * Runs the original Pasta search on a provided plan with precomputed planning bindings.
+    */
+  private def searchOnPlan(
+      plan: PhysicalPlan,
+      planningBindings: PlanningBindings
+  ): SearchResult = {
+    val oldPlan = activePlanningPlan
+    val oldBindings = activePlanningBindings
+    try {
+      activePlanningPlan = plan
+      activePlanningBindings = planningBindings
+      costEstimatorMemoization.clear()
+      runSearchWithTimeout()
+    } finally {
+      activePlanningPlan = oldPlan
+      activePlanningBindings = oldBindings
+    }
+  }
+
+  /**
+    * Builds skip regions over operators excluded from residual Pasta planning.
+    */
+  private def buildSkipRegions(
+      plan: PhysicalPlan,
+      analysis: RequirednessAnalysis
+  ): Set[Region] = {
+    val skipOperators = plan.operators.map(_.id).diff(analysis.executeOperators)
+    if (skipOperators.isEmpty) {
+      return Set.empty
+    }
+    val skipInternalLinks = plan.links
+      .filter(link => skipOperators.contains(link.fromOpId) && skipOperators.contains(link.toOpId))
+    val linksToRemove = plan.links.diff(skipInternalLinks)
+    val linksPrunedPlan = linksToRemove.foldLeft(plan)((acc, link) => acc.removeLink(link))
+    val skipPlan = linksPrunedPlan.getSubPlan(skipOperators)
+    val skipRegionSkeletons = createRegions(skipPlan, Set.empty)
+    skipRegionSkeletons.map { region =>
+      val reuseOnlyOutputConfigs = analysis.cacheHitRequiredOutputPorts
+        .filter(pid => region.physicalOps.exists(_.id == pid.opId))
+        .flatMap { outputPort =>
+          cachedOutputsByPort.get(outputPort).map { cached =>
+            outputPort -> OutputPortConfig(
+              storageURI = cached.resultUri,
+              cachedTupleCount = cached.tupleCount,
+              materialize = false
+            )
+          }
+        }
+        .toMap
+      region.copy(
+        cached = true,
+        resourceConfig = Some(ResourceConfig(portConfigs = reuseOnlyOutputConfigs))
+      )
+    }
+  }
+
+  /**
+    * Produces the final full region plan by combining skip regions and execute regions
+    * (from residual Pasta), then reindexing region IDs with skipped regions first.
+    */
+  private def buildFinalRegionPlan(
+      executeRegionDAG: DirectedAcyclicGraph[Region, RegionLink],
+      skipRegions: Set[Region]
+  ): RegionPlan = {
+    val executeRegions = executeRegionDAG.vertexSet().asScala.toSet
+    val executeLinks = executeRegionDAG.edgeSet().asScala.toSet
+    val allRegions = executeRegions ++ skipRegions
+    val orderedRegions = allRegions.toSeq.sortBy(region =>
+      (if (skipRegions.contains(region)) 0 else 1, region.id.id)
+    )
+    val remappedRegionByRegion = orderedRegions.zipWithIndex.map {
+      case (region, idx) => region -> region.copy(id = RegionIdentity(idx.toLong))
+    }.toMap
+    val executeRegionById = executeRegions.map(region => region.id -> region).toMap
+
+    val remappedRegions = remappedRegionByRegion.values.toSet
+    val remappedExecuteLinks = executeLinks.map { link =>
+      val fromRegion = executeRegionById(link.fromRegionId)
+      val toRegion = executeRegionById(link.toRegionId)
+      RegionLink(
+        remappedRegionByRegion(fromRegion).id,
+        remappedRegionByRegion(toRegion).id
+      )
+    }
+    RegionPlan(remappedRegions, remappedExecuteLinks)
+  }
+
+  /**
+    * Partitions a physical plan into Regions and assigns search-time port bindings in two passes.
     *
-    * @param physicalPlan the original physical plan (without materializations)
-    * @param matEdges     edges to be materialized (including blocking edges)
-    * @return a set of `Region` skeletons (resourceConfig/cached filled later)
+    * Pass 1 assigns output bindings for:
+    * - outputs of materialized edges in the current search state,
+    * - visible required outputs that must be freshly produced,
+    * - reuse-only required outputs that must bind to cached URIs.
+    *
+    * Pass 2 builds input bindings by wiring:
+    * - materialized-edge reader URIs from pass 1,
+    * - cache-fed input URIs precomputed during requiredness analysis.
     */
   private def createRegions(
       physicalPlan: PhysicalPlan,
       matEdges: Set[PhysicalLink]
   ): Set[Region] = {
-
-    // remove materialized edges and create connected components
-
     val matEdgesRemovedDAG: PhysicalPlan = matEdges.foldLeft(physicalPlan)(_.removeLink(_))
 
     val connectedComponents: Set[Graph[PhysicalOpIdentity, PhysicalLink]] =
@@ -257,12 +396,8 @@ class CostBasedScheduleGenerator(
         matEdgesRemovedDAG.dag
       ).getConnectedComponents.asScala.toSet
 
-    //  build region skeletons with no materialization information
-
-    val regionSkeletons: Set[Region] = connectedComponents.zipWithIndex.map {
+    val regionsWithOutputBindings: Set[Region] = connectedComponents.zipWithIndex.map {
       case (connectedSubDAG, idx) =>
-        // Operators and intra‑region pipelined links
-
         val operators: Set[PhysicalOpIdentity] = connectedSubDAG.vertexSet().asScala.toSet
 
         val links: Set[PhysicalLink] = operators
@@ -275,7 +410,6 @@ class CostBasedScheduleGenerator(
 
         val physicalOps: Set[PhysicalOp] = operators.map(physicalPlan.getOperator)
 
-        // Enumerate all ports belonging to the Region
         val ports: Set[GlobalPortIdentity] = physicalOps.flatMap { op =>
           op.inputPorts.keys
             .map(inputPortId => GlobalPortIdentity(op.id, inputPortId, input = true))
@@ -284,19 +418,103 @@ class CostBasedScheduleGenerator(
             .toSet
         }
 
-        // Build the Region skeleton; cache/resourceConfig to be populated after classification.
+        val outputPortIdsFromMatEdges = matEdges
+          .filter(edge => operators.contains(edge.fromOpId))
+          .map(edge => GlobalPortIdentity(edge.fromOpId, edge.fromPortId))
+        val visibleFreshOutputPortIds = activePlanningBindings.visibleFreshOutputPorts
+          .filter(portId => operators.contains(portId.opId))
+        val reuseOnlyOutputPortIds = activePlanningBindings.reuseOnlyOutputsByPort.keySet
+          .filter(portId => operators.contains(portId.opId))
+        val outputPortIdsNeedingBindings =
+          outputPortIdsFromMatEdges ++ visibleFreshOutputPortIds ++ reuseOnlyOutputPortIds
+
+        val outputPortConfigs = outputPortIdsNeedingBindings.map { outputPortId =>
+          activePlanningBindings.reuseOnlyOutputsByPort.get(outputPortId) match {
+            case Some(cachedOutput) =>
+              outputPortId -> OutputPortConfig(
+                storageURI = cachedOutput.resultUri,
+                cachedTupleCount = cachedOutput.tupleCount,
+                materialize = false
+              )
+            case None =>
+              outputPortId -> OutputPortConfig(
+                storageURI = createResultURI(
+                  workflowId = workflowContext.workflowId,
+                  executionId = workflowContext.executionId,
+                  globalPortId = outputPortId
+                ),
+                cachedTupleCount = None,
+                materialize = true
+              )
+          }
+        }.toMap
+
+        val resourceConfig =
+          if (outputPortConfigs.nonEmpty) Some(ResourceConfig(portConfigs = outputPortConfigs))
+          else None
+
         Region(
           id = RegionIdentity(idx),
           physicalOps = physicalOps,
           physicalLinks = links,
           ports = ports,
-          resourceConfig = None,
+          resourceConfig = resourceConfig,
           cached = false
         )
     }
 
-    // Regions are returned as skeletons; cache/URI assignment happens in annotateRegionsWithCacheInfo.
-    regionSkeletons
+    val regionByOperator = regionsWithOutputBindings
+      .flatMap(region => region.getOperators.map(op => op.id -> region))
+      .toMap
+
+    regionsWithOutputBindings.map { region =>
+      val inputUrisFromMatEdges = matEdges
+        .filter(edge => region.physicalOps.exists(_.id == edge.toOpId))
+        .foldLeft(Map.empty[GlobalPortIdentity, List[URI]]) {
+          case (acc, matEdge) =>
+            val globalInputPortId =
+              GlobalPortIdentity(matEdge.toOpId, matEdge.toPortId, input = true)
+            val globalOutputPortId = GlobalPortIdentity(matEdge.fromOpId, matEdge.fromPortId)
+            val inputReaderUri = regionByOperator(matEdge.fromOpId)
+              .resourceConfig
+              .get
+              .portConfigs(globalOutputPortId)
+              .storageURIs
+              .head
+            acc.updated(
+              globalInputPortId,
+              acc.getOrElse(globalInputPortId, List.empty[URI]) :+ inputReaderUri
+            )
+        }
+
+      val cacheFedInputUris = activePlanningBindings.cacheFedInputUrisByPort
+        .filter { case (inputPortId, _) => region.ports.contains(inputPortId) }
+        .toMap
+
+      val mergedInputUris = (inputUrisFromMatEdges.keySet ++ cacheFedInputUris.keySet)
+        .map { inputPortId =>
+          val uris =
+            inputUrisFromMatEdges.getOrElse(inputPortId, List.empty) ++
+              cacheFedInputUris.getOrElse(inputPortId, List.empty)
+          inputPortId -> uris
+        }
+        .toMap
+
+      val inputPortConfigs = mergedInputUris.map {
+        case (inputPortId, uris) =>
+          inputPortId -> IntermediateInputPortConfig(uris)
+      }
+
+      val existingPortConfigs = region.resourceConfig.map(_.portConfigs).getOrElse(Map.empty)
+      val newResourceConfig =
+        if (inputPortConfigs.nonEmpty || existingPortConfigs.nonEmpty) {
+          Some(ResourceConfig(portConfigs = existingPortConfigs ++ inputPortConfigs))
+        } else {
+          None
+        }
+
+      region.copy(resourceConfig = newResourceConfig)
+    }
   }
 
   /**
@@ -312,7 +530,7 @@ class CostBasedScheduleGenerator(
     val regionDAG = new DirectedAcyclicGraph[Region, RegionLink](classOf[RegionLink])
     val regionGraph = new DirectedPseudograph[Region, RegionLink](classOf[RegionLink])
     val opToRegionMap = new mutable.HashMap[PhysicalOpIdentity, Region]
-    createRegions(physicalPlan, matEdges).foreach(region => {
+    createRegions(activePlanningPlan, matEdges).foreach(region => {
       region.getOperators.foreach(op => opToRegionMap(op.id) = region)
       regionGraph.addVertex(region)
       regionDAG.addVertex(region)
@@ -329,19 +547,13 @@ class CostBasedScheduleGenerator(
           isAcyclic = false
       }
     })
-    if (isAcyclic) {
-      annotateRegionsWithCacheInfo(regionDAG, matEdges, opToRegionMap.toMap)
-      Left(regionDAG)
-    } else Right(regionGraph)
+    if (isAcyclic) Left(regionDAG) else Right(regionGraph)
   }
 
   /**
-    * Performs a search to generate a region DAG.
-    * Materializations are added only after the plan is determined to be schedulable.
-    *
-    * @return A region DAG.
+    * Runs Pasta search with timeout handling and returns the selected search result.
     */
-  private def createRegionDAG(): DirectedAcyclicGraph[Region, RegionLink] = {
+  private def runSearchWithTimeout(): SearchResult = {
     val searchResultFuture: Future[SearchResult] = Future {
       workflowContext.workflowSettings.executionMode match {
         case ExecutionMode.MATERIALIZED =>
@@ -375,9 +587,7 @@ class CostBasedScheduleGenerator(
       s"WID: ${workflowContext.workflowId.id}, EID: ${workflowContext.executionId.id}, search time: " +
         s"${searchResult.searchTimeNanoSeconds / 1e6} ms."
     )
-
-    val regionDAG = searchResult.regionDAG
-    regionDAG
+    searchResult
   }
 
   /**
@@ -399,10 +609,10 @@ class CostBasedScheduleGenerator(
     val startTime = System.nanoTime()
     val originalNonBlockingEdges =
       if (oCleanEdges) {
-        physicalPlan.getNonBridgeNonBlockingLinks
+        activePlanningPlan.getNonBridgeNonBlockingLinks
       } else {
-        physicalPlan.links.diff(
-          physicalPlan.getBlockingAndDependeeLinks
+        activePlanningPlan.links.diff(
+          activePlanningPlan.getBlockingAndDependeeLinks
         )
       }
     // Queue to hold states to be explored, starting with the empty set
@@ -433,7 +643,7 @@ class CostBasedScheduleGenerator(
         }
         visited.add(currentState)
         tryConnectRegionDAG(
-          physicalPlan.getBlockingAndDependeeLinks ++ currentState
+          activePlanningPlan.getBlockingAndDependeeLinks ++ currentState
         ) match {
           case Left(regionDAG) =>
             updateOptimumIfApplicable(regionDAG)
@@ -464,12 +674,12 @@ class CostBasedScheduleGenerator(
         */
       def addNeighborStatesToFrontier(): Unit = {
         val allCurrentMaterializedEdges =
-          currentState ++ physicalPlan.getBlockingAndDependeeLinks
+          currentState ++ activePlanningPlan.getBlockingAndDependeeLinks
         // Generate and enqueue all neighbour states that haven't been visited
         var candidateEdges = originalNonBlockingEdges
           .diff(currentState)
         if (oChains) {
-          val edgesInChainWithMaterializedEdges = physicalPlan.maxChains
+          val edgesInChainWithMaterializedEdges = activePlanningPlan.maxChains
             .filter(chain => chain.intersect(allCurrentMaterializedEdges).nonEmpty)
             .flatten
           candidateEdges = candidateEdges.diff(
@@ -500,7 +710,7 @@ class CostBasedScheduleGenerator(
           if (filteredNeighborStates.nonEmpty) {
             val minCostNeighborState = filteredNeighborStates.minBy(neighborState =>
               tryConnectRegionDAG(
-                physicalPlan.getBlockingAndDependeeLinks ++ neighborState
+                activePlanningPlan.getBlockingAndDependeeLinks ++ neighborState
               ) match {
                 case Left(regionDAG) =>
                   allocateResourcesAndEvaluateCost(regionDAG)
@@ -526,7 +736,7 @@ class CostBasedScheduleGenerator(
     val startTime = System.nanoTime()
 
     val (regionDAG, cost) =
-      tryConnectRegionDAG(physicalPlan.links) match {
+      tryConnectRegionDAG(activePlanningPlan.links) match {
         case Left(dag) => (dag, allocateResourcesAndEvaluateCost(dag))
         case Right(_) =>
           (
@@ -560,14 +770,14 @@ class CostBasedScheduleGenerator(
   ): SearchResult = {
     val startTime = System.nanoTime()
     // Starting from a state where all non-blocking edges are materialized
-    val originalSeedState = physicalPlan.links.diff(
-      physicalPlan.getBlockingAndDependeeLinks
+    val originalSeedState = activePlanningPlan.links.diff(
+      activePlanningPlan.getBlockingAndDependeeLinks
     )
 
     // Chain optimization: an edge in the same chain as a blocking edge should not be materialized
     val seedStateOptimizedByChainsIfApplicable = if (oChains) {
-      val edgesInChainWithBlockingEdge = physicalPlan.maxChains
-        .filter(chain => chain.intersect(physicalPlan.getBlockingAndDependeeLinks).nonEmpty)
+      val edgesInChainWithBlockingEdge = activePlanningPlan.maxChains
+        .filter(chain => chain.intersect(activePlanningPlan.getBlockingAndDependeeLinks).nonEmpty)
         .flatten
       originalSeedState.diff(edgesInChainWithBlockingEdge)
     } else {
@@ -576,7 +786,7 @@ class CostBasedScheduleGenerator(
 
     // Clean edge optimization: a clean edge should not be materialized
     val finalSeedState = if (oCleanEdges) {
-      seedStateOptimizedByChainsIfApplicable.intersect(physicalPlan.getNonBridgeNonBlockingLinks)
+      seedStateOptimizedByChainsIfApplicable.intersect(activePlanningPlan.getNonBridgeNonBlockingLinks)
     } else {
       seedStateOptimizedByChainsIfApplicable
     }
@@ -596,7 +806,7 @@ class CostBasedScheduleGenerator(
       val currentState = queue.dequeue()
       visited.add(currentState)
       tryConnectRegionDAG(
-        physicalPlan.getBlockingAndDependeeLinks ++ currentState
+        activePlanningPlan.getBlockingAndDependeeLinks ++ currentState
       ) match {
         case Left(regionDAG) =>
           updateOptimumIfApplicable(regionDAG)
@@ -639,7 +849,7 @@ class CostBasedScheduleGenerator(
           if (unvisitedNeighborStates.nonEmpty) {
             val minCostNeighborState = unvisitedNeighborStates.minBy(neighborState =>
               tryConnectRegionDAG(
-                physicalPlan.getBlockingAndDependeeLinks ++ neighborState
+                activePlanningPlan.getBlockingAndDependeeLinks ++ neighborState
               ) match {
                 case Left(regionDAG) =>
                   allocateResourcesAndEvaluateCost(regionDAG)

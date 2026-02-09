@@ -145,7 +145,7 @@ trait QueryWorkerStatisticsHandler {
             } else {
               cp.workflowExecution.getLatestOperatorExecutionOption(opId) match {
                 // Operator region has not been initialized yet; skip in this polling round.
-                case None       => Seq.empty
+                case None => Seq.empty
                 case Some(exec) =>
                   // Skip completed operators
                   if (exec.getState == COMPLETED) {
@@ -157,9 +157,7 @@ trait QueryWorkerStatisticsHandler {
                     // Send queryStatistics to each worker and update internal state on reply
                     workerIds.map { wid =>
                       workerInterface.queryStatistics(EmptyRequest(), wid).map { resp =>
-                        collectedResults.addOne(
-                          (exec.getWorkerExecution(wid), resp, System.nanoTime())
-                        )
+                        collectedResults.addOne((exec.getWorkerExecution(wid), resp, System.nanoTime()))
                       }
                     }
                   }

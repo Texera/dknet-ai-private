@@ -2,18 +2,18 @@
 
 ## Objective
 
-Enable **incremental workflow execution** through cost-aware caching of operator output ports. When users iteratively refine workflows (modify parameters, add/remove operators), the system should:
+Enable **incremental workflow execution** through deterministic cache reuse of operator output ports. Under MVP Assumption III, when users iteratively refine workflows (modify parameters, add/remove operators), the system should:
 
 1. **Reuse cached results** where upstream computation is unchanged
-2. **Make cost-aware decisions** comparing cache read cost vs recomputation cost
+2. **Never recompute a required output port with a cache hit** (forced cache use)
 3. **Maintain correctness** via deterministic fingerprinting of upstream sub-DAGs
-4. **Preserve physical plan immutability** — caching is scheduler metadata, not plan modification
+4. **Preserve physical plan immutability**: skip/execute/cache/fresh are scheduler annotations, not plan mutations
 
-**Key principle**: The physical plan remains unchanged; cache-or-recompute decisions are made by the scheduler (Pasta / CostBasedScheduleGenerator) based on cache metadata keyed by a deterministic SHA-256 fingerprint of the upstream sub-DAG.
+**Key principle (MVP)**: The physical plan remains unchanged. Scheduling is a two-step process in `CostBasedScheduleGenerator`: (1) deterministic requiredness propagation with forced cache use, then (2) original Pasta optimization on the residual fresh-required structure only.
 
-**Research goals**:
+**Future research goals**:
 
-- Extend Pasta scheduler with cost-based caching decisions
+- Extend Pasta scheduler with cost-based cache-vs-recompute decisions
 - Develop cost models and pruning heuristics for what/when to cache
 - Evaluate speedup on iterative data science workflows
 - (Optional) Lifecycle management: eviction, invalidation, garbage collection
@@ -22,7 +22,7 @@ Enable **incremental workflow execution** through cost-aware caching of operator
 
 ### 1. Physical Plan Immutability
 
-The physical plan is never modified to accommodate caching. Cache decisions are metadata passed to the scheduler via `WorkflowSettings.cachedOutputs`. This preserves the integrity of the Pasta scheduling framework.
+The physical plan is never modified to accommodate caching. Cache decisions are metadata passed to the scheduler via `WorkflowSettings.cachedOutputs` and required output ports.
 
 ### 2. Fingerprint-Based Correctness
 
@@ -38,21 +38,31 @@ A region is either fully cached (ToSkip) or fully executed (ToExecute) — no pa
 
 - Scheduler logic (binary cached flag per region)
 - Runtime state management (consistent execution mode)
-- Cost model (compare full region costs)
+- MVP planning (skip regions are excluded from Pasta planning scope)
 
-### 4. Shallow State Hierarchy for Cached Regions
+### 4. Forced Cache Use (Assumption III)
+
+For any required output port:
+
+- If cache exists, the requirement is satisfied from cache.
+- The port is not recomputed for satisfying that requirement.
+- There is no per-port or per-region cache-vs-recompute cost decision in MVP.
+
+This includes mixed-output operators: if one required output port is cache miss and another required output port is cache hit, the operator may execute, but consumers of the cache-hit output must still bind to the cached URI.
+
+### 5. Shallow State Hierarchy for Cached Regions
 
 ToSkip regions create lightweight state structures (Workflow → Region → Operator/Link) and store cached metrics at the operator level. No Worker/Channel states are created, so `numWorkers=0` and no worker assignments are emitted.
 
-### 5. Stats Emission via Direct Client Updates
+### 6. Stats Emission via Direct Client Updates
 
 Cached regions emit synthetic `ExecutionStatsUpdate` messages directly via `asyncRPCClient.sendToClient()`, with cached operator metrics (`numWorkers=0`). This reuses existing stats infrastructure without special-casing the frontend.
 
-### 6. Explicit Cache State in Metrics
+### 7. Explicit Cache State in Metrics
 
 Cached operators use a dedicated `COMPLETED_FROM_CACHE` state in `WorkflowAggregatedState` protobuf enum. This provides clear visual feedback to users and distinguishes cache-hit completion from normal execution completion.
 
-### 7. Deferred Lifecycle Management
+### 8. Deferred Lifecycle Management
 
 V1 assumes unlimited storage. Eviction, TTL, and garbage collection are research topics for future work, not implementation blockers.
 
@@ -99,26 +109,33 @@ V1 assumes unlimited storage. Eviction, TTL, and garbage collection are research
 
 - Physical plan (immutable)
 - `cachedOutputs` (Δ): map of cache hits from step 1
-- Visible ports (☐): ports that must be materialized for user visibility
+- Required output ports (first-class): sink output ports + visible intermediate output ports (`outputPortsNeedingStorage`)
 
-**Region Classification**:
+**MVP Scheduling Flow (Assumption III)**:
 
-- **Homogeneity constraint**: A region is either fully cached (ToSkip) or fully executed (ToExecute) — no mixing within a region
-- **ToExecute regions**: Contain visible ports without cache hits OR depend on uncached intermediate materializations
-- **ToSkip regions**: All required output ports have cache hits AND no visible ports need fresh computation
-
-**Cost Model** (currently simple, needs refinement for research):
-
-- Cached regions: cost = 0
-- Executing regions: cost = (# operators × DEFAULT_OPERATOR_COST) + materialization read/write costs
-- Cache read/write: small fixed costs (0.5 per port)
-- **Future**: Historical stats-based estimation from `runtime_statistics` table
+1. **Deterministic requiredness propagation** (port/edge aware):
+   - Seed required outports with required sink + visible ports.
+   - For each operator, if any required outport is cache miss, mark operator `Execute`; otherwise `Skip`.
+   - For each `Execute` operator, mark all upstream outports on incoming edges as required.
+   - Iterate to fixed point.
+2. **Classify inputs of executing operators**:
+   - `Cache-fed` if upstream required outport has cache hit.
+   - `Fresh-required` if upstream required outport has cache miss.
+3. **Residual Pasta optimization**:
+   - Build residual planning structure containing only `Execute` operators and `Fresh-required` dependencies.
+   - Run original Pasta search/regioning/materialization on this residual structure.
+   - Keep blocking-edge constraints within the residual scope.
+4. **Assemble final full schedule**:
+   - Include residual execute regions (`ToExecute`) and skipped regions (`ToSkip`) in one schedule.
+   - Regions remain homogeneous (`cached=true/false`).
+   - All URI bindings are fixed at planning time.
+   - Cache-hit required outputs are marked as reuse-only and are never re-materialized during execution.
 
 **Output**:
 
-- Schedule with regions marked `cached=true/false`
-- Port configs updated with cached URIs for ToSkip regions
-- Cached tuple counts reused in port metadata
+- Single schedule over the full workflow with both `ToSkip` and `ToExecute` regions
+- Planning-time URI bindings for cache-fed inputs and fresh-required outputs
+- Reuse-only output semantics for cache-hit required ports to suppress rematerialization
 
 ### 3. Runtime Execution
 
@@ -142,7 +159,7 @@ Entry point: `RegionExecutionCoordinator` constructor branches on `region.cached
    - Input/output tuple counts from cached metadata
    - **UI**: The graph view displays `-` for cached input counts and for cached output ports that were not materialized; worker counts show `from cache`.
    - **Note**: Cached stats are synthetic (inputs default to 0; non-materialized outputs may be omitted). Do not use them for cost modeling until we add explicit tagging/filtering in `runtime_statistics`.
-5. **Propagate cached URIs**: Downstream operators receive cached `result_uri` for materialized inputs
+5. **Planning-time URI bindings**: Downstream operators consume URIs bound during scheduling; no runtime cache-vs-fresh URI decisions
 6. **No WorkerAssignmentUpdate**: Cached regions don't send worker assignment events (consistent with numWorkers=0)
 7. **Set phase to Completed**: Region lifecycle completes immediately
 
@@ -168,6 +185,11 @@ Entry point: `RegionExecutionCoordinator` constructor branches on `region.cached
 4. **Normal stats emission**: Real execution metrics sent to client
 
 **Architecture note**: Event-based communication follows existing controller pattern - handler emits events via `sendToClient()`, service layer registers callbacks to handle them. Clean separation: engine layer knows nothing about web/service layer.
+
+**Forced-cache nuance**:
+
+- If an operator executes due to one required output miss, other required outputs on the same operator that are cache hits are reuse-only.
+- Those cache-hit outputs are not freshly materialized in this run, and consumers remain bound to cached URIs.
 
 ### 4. Client-Side State Management
 
@@ -325,7 +347,7 @@ Phase 1.1 Service/DAO architecture is complete. Key components:
 
 ### 7. Testing Strategy
 
-- **Unit tests**: Fingerprint determinism, cost model logic, region classification
+- **Unit tests**: Fingerprint determinism, forced-cache propagation logic, region classification
 - **Integration tests**: Cache upsert → DB verification, cache lookup → region marking
 - **E2E tests**: Run workflow → populate cache → re-run → verify ToSkip behavior and result correctness
 - **Change detection**: Modify operator params → verify fingerprint mismatch → cache miss
@@ -368,11 +390,20 @@ ExecutionCacheService ────→ upsertCachedOutput()     OperatorPortCache
 - **Fingerprinting**: `FingerprintUtil` implemented with workflow-based specs for deterministic subDAG hashing
 - **Submission-time lookup**: `WorkflowExecutionService` uses `OperatorPortCacheService.lookupCachedOutputs()` to compute fingerprints for all physical output ports, queries cache, stores hits in `WorkflowSettings.cachedOutputs`
 - **Cache persistence**: `PortCompletedHandler` emits `PortMaterialized` event → `ExecutionCacheService` → `OperatorPortCacheService.upsertCachedOutput()` → `OperatorPortCacheDao.upsert()` (includes fingerprint, URI, tuple count)
-- **Scheduler integration**: `CostBasedScheduleGenerator` marks regions cached when all required outputs have hits, reuses cached URIs in port configs
+- **Scheduler integration**:
+  - Implemented behavior (current branch): deterministic requiredness propagation + residual Pasta + full schedule assembly with skip regions excluded from Pasta planning scope
+  - Planning bindings are prepared before Pasta and consumed during `createRegions` in search:
+    - fresh-required outputs receive fresh URIs,
+    - cache-hit required outputs are bound as reuse-only (`materialize=false`),
+    - cache-fed inputs are pre-bound to cached URIs.
+  - No post-search region re-annotation step; resource allocation remains in Pasta search (`allocateResourcesAndEvaluateCost`) and final execute-region input configs stay as `InputPortConfig`.
 - **Runtime execution**: `RegionExecutionCoordinator` branches on `region.cached` flag:
   - ToSkip regions: `completeCachedRegion()` records cached operator metrics (numWorkers=0, processingTime=0) without creating workers, propagates cached URIs downstream
   - ToExecute regions: normal execution path
 - **Stats emission**: Cached regions emit `ExecutionStatsUpdate` via direct client updates, maintaining consistency with normal execution lifecycle
+- **Controller stats query robustness**:
+  - `QueryWorkerStatisticsHandler` now uses optional operator-execution lookup and skips operators not yet initialized.
+  - This avoids `None.get` during global stats polling when schedule levels are launched incrementally (including skip-first ordering where some execute regions are still pending initialization).
 - **Frontend cache visualization** (Phase 1.2 - Complete):
   - Added `COMPLETED_FROM_CACHE` state to `WorkflowAggregatedState` protobuf enum
   - Added `CompletedFromCache` phase to `RegionExecutionCoordinator` for cached region lifecycle
@@ -400,14 +431,14 @@ ExecutionCacheService ────→ upsertCachedOutput()     OperatorPortCache
 The cache system integrates with three layers:
 
 1. **Execution Planning Layer**: Cache lookup at workflow submission, fingerprint computation
-2. **Scheduler Layer (Pasta)**: Cost-based cache-or-recompute decisions, region classification
-3. **Runtime Layer**: Short-circuit execution for cached regions, state management, stats emission
+2. **Scheduler Layer (Pasta)**: Deterministic forced-cache propagation + residual Pasta optimization + full schedule assembly
+3. **Runtime Layer**: Short-circuit execution for cached regions, planning-time URI binding consumption, stats emission
 
 ## Research Contributions
 
-### 1. Cost Model & Pruning (Primary Contribution)
+### 1. Cost Model & Pruning (Future Contribution)
 
-**Goal**: Determine when caching is beneficial and what outputs to cache.
+**Goal**: Determine when caching is beneficial and what outputs to cache, beyond MVP Assumption III.
 
 **Components**:
 
@@ -417,9 +448,9 @@ The cache system integrates with three layers:
   - Skip caching small outputs (recompute is cheap)
   - Skip terminal operators (no downstream reuse)
   - Skip low-reuse-probability operators
-- **Cache-or-recompute decision**: Per-region cost comparison (cache read vs recompute)
+- **Cache-or-recompute decision**: Per-region or per-port comparison (cache read vs recompute)
 
-**Current status**: Simple cost model (cached=0, execute>0). Need to develop historical stats-based estimation.
+**Current MVP status**: Disabled for merge target. MVP uses forced cache use when required output ports have cache hits.
 
 **Data source**: `runtime_statistics` table already captures execution metrics (data/control processing time, tuple counts, worker counts per operator).
 
