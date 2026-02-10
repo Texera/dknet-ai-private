@@ -40,16 +40,24 @@ class WorkflowScheduler(
     * Update the schedule to be executed, based on the given physicalPlan.
     */
   def updateSchedule(physicalPlan: PhysicalPlan): Unit = {
-    // generate a schedule using a region plan generator.
-    val (generatedSchedule, updatedPhysicalPlan) =
-      // CostBasedRegionPlanGenerator considers costs to try to find an optimal plan.
-      new CostBasedScheduleGenerator(
-        workflowContext,
-        physicalPlan,
-        actorId
-      ).generate()
-    this.schedule = generatedSchedule
-    this.physicalPlan = updatedPhysicalPlan
+    // Keep the full immutable physical plan on scheduler/controller side.
+    this.physicalPlan = physicalPlan
+    val preScheduling = CacheReusePreSchedulingStep.prepare(
+      workflowContext,
+      physicalPlan
+    )
+    val planningWorkflowContext = new WorkflowContext(
+      workflowContext.workflowId,
+      workflowContext.executionId,
+      preScheduling.planningWorkflowSettings
+    )
+    this.schedule = new CostBasedScheduleGenerator(
+      planningWorkflowContext,
+      preScheduling.planningPhysicalPlan,
+      actorId,
+      preScheduling.planningHints,
+      preScheduling.leadingRegions
+    ).generate()._1
   }
 
   def getNextRegions: Set[Region] = if (!schedule.hasNext) Set() else schedule.next()

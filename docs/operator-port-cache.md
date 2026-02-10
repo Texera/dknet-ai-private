@@ -9,7 +9,7 @@ Enable **incremental workflow execution** through deterministic cache reuse of o
 3. **Maintain correctness** via deterministic fingerprinting of upstream sub-DAGs
 4. **Preserve physical plan immutability**: skip/execute/cache/fresh are scheduler annotations, not plan mutations
 
-**Key principle (MVP)**: The physical plan remains unchanged. Scheduling is a two-step process in `CostBasedScheduleGenerator`: (1) deterministic requiredness propagation with forced cache use, then (2) original Pasta optimization on the residual fresh-required structure only.
+**Key principle (MVP)**: The physical plan remains unchanged. Scheduling is a two-step flow: (1) a controller pre-scheduling step computes deterministic requiredness and cache bindings, then (2) `CostBasedScheduleGenerator` (Pasta) runs on the residual fresh-required structure using those precomputed hints.
 
 **Future research goals**:
 
@@ -101,9 +101,12 @@ V1 assumes unlimited storage. Eviction, TTL, and garbage collection are research
 - Convert to serialized form: `Map[String, CachedOutput]` (keyed by serialized `GlobalPortIdentity` to avoid Jackson map key deserialization issues)
 - Store in `WorkflowSettings.cachedOutputs` and pass to scheduler
 
-### 2. Scheduler Integration (Pasta / CostBasedScheduleGenerator)
+### 2. Scheduler Integration (Pre-Step + Pasta)
 
-**Location**: `CostBasedScheduleGenerator`
+**Location**:
+
+- Pre-step: `CacheReusePreSchedulingStep` (controller layer before scheduling)
+- Scheduler: `CostBasedScheduleGenerator` (original Pasta search on residual plan)
 
 **Inputs**:
 
@@ -113,7 +116,7 @@ V1 assumes unlimited storage. Eviction, TTL, and garbage collection are research
 
 **MVP Scheduling Flow (Assumption III)**:
 
-1. **Deterministic requiredness propagation** (port/edge aware):
+1. **Controller pre-scheduling requiredness propagation** (port/edge aware):
    - Seed required outports with required sink + visible ports.
    - For each operator, if any required outport is cache miss, mark operator `Execute`; otherwise `Skip`.
    - For each `Execute` operator, mark all upstream outports on incoming edges as required.
@@ -121,11 +124,17 @@ V1 assumes unlimited storage. Eviction, TTL, and garbage collection are research
 2. **Classify inputs of executing operators**:
    - `Cache-fed` if upstream required outport has cache hit.
    - `Fresh-required` if upstream required outport has cache miss.
-3. **Residual Pasta optimization**:
+3. **Residual planning construction**:
    - Build residual planning structure containing only `Execute` operators and `Fresh-required` dependencies.
+   - Build precomputed planning hints:
+     - output-port config overrides for reuse-only cache-hit required outputs (`materialize=false`),
+     - input-port URI overrides for cache-fed execute inputs.
+   - Build skipped (`ToSkip`) leading regions outside Pasta scope.
+4. **Residual Pasta optimization**:
    - Run original Pasta search/regioning/materialization on this residual structure.
    - Keep blocking-edge constraints within the residual scope.
-4. **Assemble final full schedule**:
+5. **Assemble final full schedule**:
+   - Prepend skipped regions before execute regions.
    - Include residual execute regions (`ToExecute`) and skipped regions (`ToSkip`) in one schedule.
    - Regions remain homogeneous (`cached=true/false`).
    - All URI bindings are fixed at planning time.
@@ -397,6 +406,7 @@ ExecutionCacheService ────→ upsertCachedOutput()     OperatorPortCache
     - cache-hit required outputs are bound as reuse-only (`materialize=false`),
     - cache-fed inputs are pre-bound to cached URIs.
   - No post-search region re-annotation step; resource allocation remains in Pasta search (`allocateResourcesAndEvaluateCost`) and final execute-region input configs stay as `InputPortConfig`.
+  - Cache-aware orchestration is isolated in `CacheReusePreSchedulingStep` (controller layer before scheduling); `CostBasedScheduleGenerator` stays close to `main` and only consumes generic precomputed planning hints plus leading skipped regions.
 - **Runtime execution**: `RegionExecutionCoordinator` branches on `region.cached` flag:
   - ToSkip regions: `completeCachedRegion()` records cached operator metrics (numWorkers=0, processingTime=0) without creating workers, propagates cached URIs downstream
   - ToExecute regions: normal execution path
