@@ -71,6 +71,9 @@ export class CachePanelComponent implements OnInit {
       return;
     }
     this.workflowId = workflowId;
+    // Invalidation notices are compile-time, session-local feedback.
+    // Clear stale notices when opening/reloading the workflow cache panel.
+    this.cacheEntriesService.clearInvalidationNotice();
     this.cacheEntriesService
       .getCacheEntriesStream()
       .pipe(untilDestroyed(this))

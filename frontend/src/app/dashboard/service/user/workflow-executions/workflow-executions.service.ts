@@ -28,6 +28,10 @@ import { ExecutionState, LogicalPlan } from "../../../../workspace/types/execute
 
 export const WORKFLOW_EXECUTIONS_API_BASE_URL = `${AppSettings.getApiEndpoint()}/executions`;
 
+export type CacheInvalidationResponse = Readonly<{
+  removedCount: number;
+}>;
+
 @Injectable({
   providedIn: "root",
 })
@@ -127,7 +131,10 @@ export class WorkflowExecutionsService {
   /**
    * Invalidates cache entries whose fingerprints do not match the provided logical plan.
    */
-  invalidateWorkflowCacheEntries(wid: number, logicalPlan: LogicalPlan): Observable<void> {
-    return this.http.post<void>(`${WORKFLOW_EXECUTIONS_API_BASE_URL}/${wid}/cache/invalidate`, logicalPlan);
+  invalidateWorkflowCacheEntries(wid: number, logicalPlan: LogicalPlan): Observable<CacheInvalidationResponse | null> {
+    return this.http.post<CacheInvalidationResponse | null>(
+      `${WORKFLOW_EXECUTIONS_API_BASE_URL}/${wid}/cache/invalidate`,
+      logicalPlan
+    );
   }
 }

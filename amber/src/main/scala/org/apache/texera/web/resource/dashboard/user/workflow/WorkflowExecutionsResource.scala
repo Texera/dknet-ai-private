@@ -119,6 +119,26 @@ object WorkflowExecutionsResource {
   }
 
   /**
+    * Retrieves all execution IDs of a workflow for a computing unit, ordered by latest first.
+    *
+    * @param wid workflow id
+    * @param cuid computing unit id
+    * @return list of execution ids
+    */
+  def getExecutionIDs(wid: Integer, cuid: Integer): List[Integer] = {
+    context
+      .select(WORKFLOW_EXECUTIONS.EID)
+      .from(WORKFLOW_EXECUTIONS)
+      .join(WORKFLOW_VERSION)
+      .on(WORKFLOW_EXECUTIONS.VID.eq(WORKFLOW_VERSION.VID))
+      .where(WORKFLOW_VERSION.WID.eq(wid).and(WORKFLOW_EXECUTIONS.CUID.eq(cuid)))
+      .orderBy(WORKFLOW_EXECUTIONS.EID.desc())
+      .fetchInto(classOf[Integer])
+      .asScala
+      .toList
+  }
+
+  /**
     * Computes which operators in a workflow are restricted due to dataset access controls.
     *
     * This function:
@@ -380,13 +400,21 @@ object WorkflowExecutionsResource {
 
   /**
     * Removes all resources related to the specified execution IDs,
-    * including runtime statistics, console messages, result documents, and database records.
+    * including runtime statistics, console messages, result documents, cache metadata,
+    * and execution database records.
     *
     * @param eids Array of execution IDs to be cleaned up.
     */
   def removeAllExecutionFiles(eids: Array[Integer]): Unit = {
     val eIdsLong = eids.map(_.toLong)
     val eIdsList = eIdsLong.toSeq.asJava
+    val executionIds = eIdsLong.toIndexedSeq.map(ExecutionIdentity(_))
+
+    // Remove cache entries that reference results produced by these executions.
+    val cacheService = new OperatorPortCacheService(
+      new OperatorPortCacheDao(SqlServer.getInstance())
+    )
+    cacheService.invalidateCacheBySourceExecutions(executionIds)
 
     // Collect all related document URIs (runtime stats, console logs, results)
     val uris: Seq[URI] = eIdsLong.toIndexedSeq.flatMap { eid =>
@@ -598,6 +626,13 @@ case class ExecutionRenameRequest(wid: Integer, eId: Integer, executionName: Str
   * @param logicalOpIds Logical operator IDs whose output caches should be removed
   */
 case class CacheEvictionRequest(logicalOpIds: List[String])
+
+/**
+  * Response payload for cache invalidation endpoints.
+  *
+  * @param removedCount Number of cache entries removed
+  */
+case class CacheInvalidationResponse(removedCount: Int)
 
 @Produces(Array(MediaType.APPLICATION_JSON, MediaType.APPLICATION_OCTET_STREAM, "application/zip"))
 @Path("/executions")
@@ -893,7 +928,7 @@ class WorkflowExecutionsResource {
       request: LogicalPlanPojo,
       @PathParam("wid") wid: Integer,
       @Auth sessionUser: SessionUser
-  ): Unit = {
+  ): CacheInvalidationResponse = {
     validateUserCanWriteWorkflow(sessionUser.getUser.getUid, wid)
     val workflow = try {
       val workflowContext = new WorkflowContext(workflowId = WorkflowIdentity(wid.toLong))
@@ -904,7 +939,9 @@ class WorkflowExecutionsResource {
     }
     val dao = new OperatorPortCacheDao(SqlServer.getInstance())
     val cacheService = new OperatorPortCacheService(dao)
-    cacheService.invalidateMismatchedCacheEntries(WorkflowIdentity(wid.toLong), workflow.physicalPlan)
+    val removedCount =
+      cacheService.invalidateMismatchedCacheEntries(WorkflowIdentity(wid.toLong), workflow.physicalPlan)
+    CacheInvalidationResponse(removedCount)
   }
 
   /**

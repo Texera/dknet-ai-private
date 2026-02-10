@@ -214,7 +214,11 @@ Entry point: `RegionExecutionCoordinator` constructor branches on `region.cached
 
 - Existing protobuf messages (`OperatorStatistics`) handle cached regions naturally
 - No `from_cache` flag required (can infer from numWorkers=0 + instant completion)
-- Lifecycle management (eviction, cleanup) deferred to future work
+- Cost-aware lifecycle management (eviction policy) deferred to future work
+- Lifecycle timeout cleanup clears execution-scoped artifacts (result/console/runtime stats) for all executions of the workflow on the current computing unit
+- Lifecycle timeout cleanup clears cached artifacts produced by those executions via `clearExecutionResources` (single cleanup path), including cache rows, associated `operator_port_executions` rows, and cached result documents
+- Lifecycle timeout cleanup excludes cached result URIs already removed by cache invalidation to avoid double-clearing documents
+- Bulk execution deletion cleanup removes cache metadata rows by `source_execution_id` to avoid dangling cache entries after execution artifacts are deleted
 
 **Cache metadata UI (Implemented)**:
 
@@ -396,6 +400,9 @@ ExecutionCacheService ────→ upsertCachedOutput()     OperatorPortCache
   - `OperatorPortCacheService`: High-level cache operations (lookupCachedOutputs, upsertCachedOutput, invalidateWorkflowCache)
   - `ExecutionCacheService`: Event listener bridging controller events to service layer
   - Event-based communication via `PortMaterialized` event and `client.registerCallback[T]`
+  - Execution cleanup integration:
+    - lifecycle timeout (cuid-scoped) clears cache artifacts via `invalidateCacheBySourceExecutions`
+    - bulk execution deletion removes cache artifacts via `invalidateCacheBySourceExecutions`
 - **Fingerprinting**: `FingerprintUtil` implemented with workflow-based specs for deterministic subDAG hashing
 - **Submission-time lookup**: `WorkflowExecutionService` uses `OperatorPortCacheService.lookupCachedOutputs()` to compute fingerprints for all physical output ports, queries cache, stores hits in `WorkflowSettings.cachedOutputs`
 - **Cache persistence**: `PortCompletedHandler` emits `PortMaterialized` event → `ExecutionCacheService` → `OperatorPortCacheService.upsertCachedOutput()` → `OperatorPortCacheDao.upsert()` (includes fingerprint, URI, tuple count)

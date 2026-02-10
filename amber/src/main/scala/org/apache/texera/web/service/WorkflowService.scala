@@ -117,12 +117,9 @@ class WorkflowService(
     s"workflowId=$workflowId",
     cleanUpTimeout,
     () => {
-      // clear the storage resources associated with the latest execution
-      WorkflowExecutionService
-        .getLatestExecutionId(workflowId, computingUnitId)
-        .foreach(eid => {
-//          clearExecutionResources(eid)
-        })
+      // Clear execution-scoped artifacts (runtime stats, result/console docs) for all executions.
+      val executionIds = WorkflowExecutionService.getExecutionIds(workflowId, computingUnitId)
+      clearExecutionResources(executionIds)
       WorkflowService.workflowServiceMapping.remove(mkWorkflowStateId(workflowId))
       if (executionService.getValue != null) {
         // shutdown client
@@ -327,27 +324,40 @@ class WorkflowService(
   }
 
   /**
-    * Cleans up all resources associated with a workflow execution.
+    * Cleans up all resources associated with workflow executions.
     *
     * This method performs resource cleanup in the following sequence:
-    *  1. Retrieves all document URIs associated with the execution
-    *  2. Clears URI references from the execution registry
-    *  3. Safely clears all result and console message documents
-    *  4. Expires Iceberg snapshots for runtime statistics
-    *  5. Deletes large binaries from MinIO
+    *  1. Retrieves all document URIs associated with the executions
+    *  2. Invalidates cache entries produced by these executions (cache rows + cached docs + cache-linked operator_port_executions rows)
+    *  3. Clears URI references from the execution registry
+    *  4. Safely clears all result and console message documents
+    *  5. Expires Iceberg snapshots for runtime statistics
+    *  6. Deletes large binaries from MinIO
     *
-    * @param eid The execution identity to clean up resources for
+    * @param executionIds execution identities to clean up resources for
     */
-  private def clearExecutionResources(eid: ExecutionIdentity): Unit = {
-    // Retrieve URIs for all resources associated with this execution
-    val resultUris = WorkflowExecutionsResource.getResultUrisByExecutionId(eid)
-    val consoleMessagesUris = WorkflowExecutionsResource.getConsoleMessagesUriByExecutionId(eid)
+  private def clearExecutionResources(executionIds: Seq[ExecutionIdentity]): Unit = {
+    if (executionIds.isEmpty) {
+      return
+    }
+
+    val runtimeStatsUris =
+      executionIds.flatMap(eid => WorkflowExecutionsResource.getRuntimeStatsUriByExecutionId(eid).toList)
+
+    // Invalidate cache artifacts produced by these executions.
+    val cacheInvalidation = cacheService.invalidateCacheBySourceExecutionsWithArtifacts(executionIds)
+
+    val resultUris = executionIds
+      .flatMap(WorkflowExecutionsResource.getResultUrisByExecutionId)
+      .filterNot(cacheInvalidation.deletedResultUris.contains)
+    val consoleMessagesUris =
+      executionIds.flatMap(WorkflowExecutionsResource.getConsoleMessagesUriByExecutionId)
 
     // Remove references from registry first
-    WorkflowExecutionsResource.deleteConsoleMessageAndExecutionResultUris(eid)
+    executionIds.foreach(WorkflowExecutionsResource.deleteConsoleMessageAndExecutionResultUris)
 
     // Clean up all result and console message documents
-    (resultUris ++ consoleMessagesUris).foreach { uri =>
+    (resultUris ++ consoleMessagesUris).distinct.foreach { uri =>
       try DocumentFactory.openDocument(uri)._1.clear()
       catch {
         case error: Throwable =>
@@ -356,7 +366,7 @@ class WorkflowService(
     }
 
     // Expire any Iceberg snapshots for runtime statistics
-    WorkflowExecutionsResource.getRuntimeStatsUriByExecutionId(eid).foreach { uri =>
+    runtimeStatsUris.distinct.foreach { uri =>
       try {
         DocumentFactory.openDocument(uri)._1 match {
           case iceberg: OnIceberg => iceberg.expireSnapshots()

@@ -155,6 +155,47 @@ class OperatorPortCacheDao(sqlServer: SqlServer) {
   }
 
   /**
+    * List cache entries produced by the specified source execution IDs.
+    *
+    * @param sourceExecutionIds execution IDs that produced cached outputs
+    * @return cache entries with matching source_execution_id
+    */
+  def listBySourceExecutionIds(sourceExecutionIds: Seq[Long]): Seq[OperatorPortCacheRecord] = {
+    val executionIds = sourceExecutionIds.distinct
+    if (executionIds.isEmpty) {
+      return Seq.empty
+    }
+    context
+      .select(
+        OPERATOR_PORT_CACHE.WORKFLOW_ID,
+        OPERATOR_PORT_CACHE.GLOBAL_PORT_ID,
+        OPERATOR_PORT_CACHE.SUBDAG_HASH,
+        OPERATOR_PORT_CACHE.FINGERPRINT_JSON,
+        OPERATOR_PORT_CACHE.RESULT_URI,
+        OPERATOR_PORT_CACHE.TUPLE_COUNT,
+        OPERATOR_PORT_CACHE.SOURCE_EXECUTION_ID,
+        OPERATOR_PORT_CACHE.UPDATED_AT
+      )
+      .from(OPERATOR_PORT_CACHE)
+      .where(OPERATOR_PORT_CACHE.SOURCE_EXECUTION_ID.in(executionIds.map(Long.box).asJava))
+      .fetch()
+      .asScala
+      .map(record =>
+        OperatorPortCacheRecord(
+          workflowId = record.value1().longValue(),
+          globalPortId = record.value2(),
+          subdagHash = record.value3(),
+          fingerprintJson = record.value4(),
+          resultUri = URI.create(record.value5()),
+          tupleCount = Option(record.value6()).map(_.longValue()),
+          sourceExecutionId = Option(record.value7()).map(_.longValue()),
+          updatedAt = Option(record.value8())
+        )
+      )
+      .toSeq
+  }
+
+  /**
     * Insert or update a cache entry (upsert).
     * On conflict (workflow_id, global_port_id, subdag_hash), updates the existing record and refreshes updated_at.
     *
@@ -197,6 +238,25 @@ class OperatorPortCacheDao(sqlServer: SqlServer) {
     context
       .deleteFrom(OPERATOR_PORT_CACHE)
       .where(OPERATOR_PORT_CACHE.WORKFLOW_ID.eq(workflowId.toInt))
+      .execute()
+  }
+
+  /**
+    * Delete cache entries by source execution IDs.
+    * This removes cache metadata whose backing result artifacts were produced by
+    * executions that are being cleaned up.
+    *
+    * @param sourceExecutionIds Execution IDs that produced the cached outputs
+    * @return Number of rows deleted
+    */
+  def deleteBySourceExecutionIds(sourceExecutionIds: Seq[Long]): Int = {
+    val executionIds = sourceExecutionIds.distinct
+    if (executionIds.isEmpty) {
+      return 0
+    }
+    context
+      .deleteFrom(OPERATOR_PORT_CACHE)
+      .where(OPERATOR_PORT_CACHE.SOURCE_EXECUTION_ID.in(executionIds.map(Long.box).asJava))
       .execute()
   }
 

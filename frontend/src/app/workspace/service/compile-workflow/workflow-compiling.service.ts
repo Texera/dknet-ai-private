@@ -426,9 +426,6 @@ export class WorkflowCompilingService {
     if (!this.cacheEntriesService.isAutoInvalidationEnabled()) {
       return;
     }
-    const beforeKeys = new Set(
-      this.cacheEntriesService.getCacheEntriesSnapshot().map(entry => this.cacheEntriesService.buildEntryKey(entry))
-    );
     this.workflowExecutionsService
       .invalidateWorkflowCacheEntries(workflowId, logicalPlan)
       .pipe(
@@ -437,15 +434,9 @@ export class WorkflowCompilingService {
           return EMPTY;
         })
       )
-      .subscribe(() => {
-        this.cacheEntriesService.refreshCacheEntries(workflowId).subscribe(entries => {
-          const afterKeys = new Set(entries.map(entry => this.cacheEntriesService.buildEntryKey(entry)));
-          let removedCount = 0;
-          beforeKeys.forEach(key => {
-            if (!afterKeys.has(key)) {
-              removedCount += 1;
-            }
-          });
+      .subscribe(response => {
+        const removedCount = response?.removedCount ?? 0;
+        this.cacheEntriesService.refreshCacheEntries(workflowId).subscribe(() => {
           this.cacheEntriesService.notifyInvalidation(workflowId, removedCount);
         });
       });

@@ -50,6 +50,17 @@ class OperatorPortCacheService(dao: OperatorPortCacheDao) {
   private val context = SqlServer.getInstance().createDSLContext()
 
   /**
+    * Result of cache invalidation by source executions.
+    *
+    * @param deletedRows number of rows removed from operator_port_cache
+    * @param deletedResultUris cached result URIs deleted/cleared during invalidation
+    */
+  case class SourceExecutionInvalidationResult(
+      deletedRows: Int,
+      deletedResultUris: Set[URI]
+  )
+
+  /**
     * Lookup cached outputs for all materializable ports in the physical plan.
     * Called at workflow submission time by WorkflowExecutionService.
     *
@@ -135,6 +146,43 @@ class OperatorPortCacheService(dao: OperatorPortCacheDao) {
   def invalidateWorkflowCache(workflowId: WorkflowIdentity): Unit = {
     val cacheEntries = dao.listByWorkflow(workflowId.id, Int.MaxValue, 0)
     deleteCacheEntriesByPorts(workflowId, cacheEntries)
+  }
+
+  /**
+    * Invalidate cache entries produced by the specified executions.
+    *
+    * This removes cache metadata as well as cache-linked storage artifacts:
+    * - operator_port_executions rows referencing cached URIs
+    * - cached result documents
+    *
+    * @param executionIds Execution IDs whose produced cache entries should be deleted
+    * @return Number of cache rows deleted
+    */
+  def invalidateCacheBySourceExecutions(executionIds: Seq[ExecutionIdentity]): Int = {
+    invalidateCacheBySourceExecutionsWithArtifacts(executionIds).deletedRows
+  }
+
+  /**
+    * Invalidate cache entries produced by the specified executions and return deleted URI artifacts.
+    *
+    * This helper is used by lifecycle cleanup to avoid re-clearing cached documents.
+    *
+    * @param executionIds Execution IDs whose produced cache entries should be deleted
+    * @return deleted rows and deleted result URIs
+    */
+  def invalidateCacheBySourceExecutionsWithArtifacts(
+      executionIds: Seq[ExecutionIdentity]
+  ): SourceExecutionInvalidationResult = {
+    val sourceExecutionIds = executionIds.map(_.id)
+    val cacheEntries = dao.listBySourceExecutionIds(sourceExecutionIds)
+    if (cacheEntries.isEmpty) {
+      return SourceExecutionInvalidationResult(0, Set.empty)
+    }
+    val resultUris = cacheEntries.map(_.resultUri).distinct
+    deleteOperatorPortResultsByUris(resultUris)
+    val deleted = dao.deleteBySourceExecutionIds(sourceExecutionIds)
+    clearCachedResultDocuments(resultUris)
+    SourceExecutionInvalidationResult(deleted, resultUris.toSet)
   }
 
   /**

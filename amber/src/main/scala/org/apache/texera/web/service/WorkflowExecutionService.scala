@@ -57,6 +57,22 @@ object WorkflowExecutionService {
       .getLatestExecutionID(workflowId.id.toInt, computingUnitId)
       .map(eid => new ExecutionIdentity(eid.longValue()))
   }
+
+  /**
+    * Retrieve all execution IDs for a workflow and computing unit.
+    *
+    * @param workflowId workflow identity
+    * @param computingUnitId computing unit id
+    * @return execution IDs ordered by newest first
+    */
+  def getExecutionIds(
+      workflowId: WorkflowIdentity,
+      computingUnitId: Int
+  ): Seq[ExecutionIdentity] = {
+    WorkflowExecutionsResource
+      .getExecutionIDs(workflowId.id.toInt, computingUnitId)
+      .map(eid => new ExecutionIdentity(eid.longValue()))
+  }
 }
 
 class WorkflowExecutionService(
