@@ -20,7 +20,7 @@
 import { DatePipe, registerLocaleData } from "@angular/common";
 import { HTTP_INTERCEPTORS, HttpClientModule } from "@angular/common/http";
 import en from "@angular/common/locales/en";
-import { APP_INITIALIZER, NgModule, CUSTOM_ELEMENTS_SCHEMA } from "@angular/core";
+import { APP_INITIALIZER, CUSTOM_ELEMENTS_SCHEMA, NgModule } from "@angular/core";
 import { FormsModule, ReactiveFormsModule } from "@angular/forms";
 import { BrowserModule } from "@angular/platform-browser";
 import { BrowserAnimationsModule } from "@angular/platform-browser/animations";
@@ -103,13 +103,16 @@ import { CoeditorUserIconComponent } from "./workspace/component/menu/coeditor-u
 import { AgentPanelComponent } from "./workspace/component/agent-panel/agent-panel.component";
 import { AgentChatComponent } from "./workspace/component/agent-panel/agent-chat/agent-chat.component";
 import { AgentRegistrationComponent } from "./workspace/component/agent-panel/agent-registration/agent-registration.component";
+import { ReActStepDetailModalComponent } from "./workspace/component/agent-panel/react-step-detail-modal/react-step-detail-modal.component";
+import { ReActStepListComponent } from "./workspace/component/agent-panel/react-step-list/react-step-list.component";
+import { InputAutoCompleteComponent } from "./workspace/component/input-autocomplete/input-autocomplete.component";
 import { DirectoryPathInputComponent } from "./workspace/component/directory-path-input/directory-path-input.component";
 import { DatasetFileSelectorComponent } from "./workspace/component/dataset-file-selector/dataset-file-selector.component";
 import { DatasetVersionSelectorComponent } from "./workspace/component/dataset-version-selector/dataset-version-selector.component";
 import { DatasetSelectionModalComponent } from "./workspace/component/dataset-selection-modal/dataset-selection-modal.component";
 import { CollabWrapperComponent } from "./common/formly/collab-wrapper/collab-wrapper/collab-wrapper.component";
-import { TexeraCopilot } from "./workspace/service/copilot/texera-copilot";
 import { NzSwitchModule } from "ng-zorro-antd/switch";
+import { NzRadioModule } from "ng-zorro-antd/radio";
 import { AboutComponent } from "./hub/component/about/about.component";
 import { NzLayoutModule } from "ng-zorro-antd/layout";
 import { AuthGuardService } from "./common/service/user/auth-guard.service";
@@ -132,6 +135,7 @@ import { FlarumComponent } from "./dashboard/component/user/flarum/flarum.compon
 import { NzAlertModule } from "ng-zorro-antd/alert";
 import { LeftPanelComponent } from "./workspace/component/left-panel/left-panel.component";
 import { ErrorFrameComponent } from "./workspace/component/result-panel/error-frame/error-frame.component";
+import { ResultStatisticsFrameComponent } from "./workspace/component/result-panel/result-statistics-frame/result-statistics-frame.component";
 import { NzResizableModule } from "ng-zorro-antd/resizable";
 import { WorkflowRuntimeStatisticsComponent } from "./dashboard/component/user/user-workflow/ngbd-modal-workflow-executions/workflow-runtime-statistics/workflow-runtime-statistics.component";
 import { TimeTravelComponent } from "./workspace/component/left-panel/time-travel/time-travel.component";
@@ -142,8 +146,9 @@ import { OverlayModule } from "@angular/cdk/overlay";
 import { HighlightSearchTermsPipe } from "./dashboard/component/user/user-workflow/user-workflow-list-item/highlight-search-terms.pipe";
 import { en_US, provideNzI18n } from "ng-zorro-antd/i18n";
 import { FilesUploaderComponent } from "./dashboard/component/user/files-uploader/files-uploader.component";
-import { ConflictingFileModalContentComponent } from "./dashboard/component/user/files-uploader/conflicting-file-modal-content/conflicting-file-modal-content.component";
 import { UserDatasetComponent } from "./dashboard/component/user/user-dataset/user-dataset.component";
+import { UserAgentComponent } from "./dashboard/component/user/user-agent/user-agent.component";
+import { UserAgentWorkspaceComponent } from "./dashboard/component/user/user-agent/user-agent-workspace.component";
 import { UserDatasetVersionCreatorComponent } from "./dashboard/component/user/user-dataset/user-dataset-explorer/user-dataset-version-creator/user-dataset-version-creator.component";
 import { DatasetDetailComponent } from "./dashboard/component/user/user-dataset/user-dataset-explorer/dataset-detail.component";
 import { UserDatasetVersionFiletreeComponent } from "./dashboard/component/user/user-dataset/user-dataset-explorer/user-dataset-version-filetree/user-dataset-version-filetree.component";
@@ -170,6 +175,8 @@ import { LandingPageComponent } from "./hub/component/landing-page/landing-page.
 import { BrowseSectionComponent } from "./hub/component/browse-section/browse-section.component";
 import { BreakpointConditionInputComponent } from "./workspace/component/code-editor-dialog/breakpoint-condition-input/breakpoint-condition-input.component";
 import { CodeDebuggerComponent } from "./workspace/component/code-editor-dialog/code-debugger.component";
+import { InlineCodePanelComponent } from "./workspace/component/inline-code-panel/inline-code-panel.component";
+import { AgentInteractionComponent } from "./workspace/component/agent-interaction/agent-interaction.component";
 import { GoogleAuthService } from "./common/service/user/google-auth.service";
 import {
   GoogleLoginProvider,
@@ -240,6 +247,7 @@ registerLocaleData(en);
     WorkflowExecutionHistoryComponent,
     ConsoleFrameComponent,
     ErrorFrameComponent,
+    ResultStatisticsFrameComponent,
     ResultTableFrameComponent,
     OperatorPropertyEditFrameComponent,
     ResultTableFrameComponent,
@@ -249,8 +257,9 @@ registerLocaleData(en);
     NgbdModalAddProjectWorkflowComponent,
     NgbdModalRemoveProjectWorkflowComponent,
     FilesUploaderComponent,
-    ConflictingFileModalContentComponent,
     UserDatasetComponent,
+    UserAgentComponent,
+    UserAgentWorkspaceComponent,
     UserDatasetVersionCreatorComponent,
     DatasetDetailComponent,
     UserDatasetVersionFiletreeComponent,
@@ -265,6 +274,9 @@ registerLocaleData(en);
     AgentPanelComponent,
     AgentChatComponent,
     AgentRegistrationComponent,
+    ReActStepDetailModalComponent,
+    ReActStepListComponent,
+    InputAutoCompleteComponent,
     DirectoryPathInputComponent,
     DirectorySelectionComponent,
     DatasetFileSelectorComponent,
@@ -303,6 +315,8 @@ registerLocaleData(en);
     MarkdownDescriptionComponent,
     UserComputingUnitComponent,
     UserComputingUnitListItemComponent,
+    InlineCodePanelComponent,
+    AgentInteractionComponent,
   ],
   imports: [
     BrowserModule,
@@ -352,6 +366,7 @@ registerLocaleData(en);
     NzCommentModule,
     ColorPickerModule,
     NzSwitchModule,
+    NzRadioModule,
     NzLayoutModule,
     NzSliderModule,
     MarkdownModule.forRoot(),
@@ -371,7 +386,6 @@ registerLocaleData(en);
     NzProgressModule,
     NzInputNumberModule,
     NzCheckboxModule,
-    NzRadioModule,
   ],
   providers: [
     provideNzI18n(en_US),
@@ -382,7 +396,6 @@ registerLocaleData(en);
     GuiConfigService,
     FileSaverService,
     ReportGenerationService,
-    TexeraCopilot,
     {
       provide: HTTP_INTERCEPTORS,
       useClass: BlobErrorHttpInterceptor,
