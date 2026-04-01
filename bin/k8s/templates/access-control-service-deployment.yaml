@@ -53,6 +53,16 @@ spec:
             {{- range .Values.texeraEnvVars }}
             - name: {{ .name }}
               value: "{{ .value }}"
+            {{- if .Values.litellm.enabled }}
+            - name: LITELLM_BASE_URL
+              value: http://{{ .Release.Name }}-{{ .Values.litellm.name }}-svc:{{ .Values.litellm.service.port }}
+            - name: LITELLM_MASTER_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-agent-service-secret
+                  key: litellm-master-key
+            - name: GUI_WORKFLOW_WORKSPACE_COPILOT_ENABLED
+              value: "true"
             {{- end }}
           livenessProbe:
             httpGet:
