@@ -92,17 +92,17 @@ object Utils extends LazyLogging {
 
   def aggregatedStateToString(state: WorkflowAggregatedState): String = {
     state match {
-      case WorkflowAggregatedState.UNINITIALIZED => "Uninitialized"
-      case WorkflowAggregatedState.READY         => "Initializing"
-      case WorkflowAggregatedState.RUNNING       => "Running"
-      case WorkflowAggregatedState.PAUSING       => "Pausing"
-      case WorkflowAggregatedState.PAUSED        => "Paused"
-      case WorkflowAggregatedState.RESUMING      => "Resuming"
-      case WorkflowAggregatedState.COMPLETED     => "Completed"
-      case WorkflowAggregatedState.TERMINATED    => "Terminated"
-      case WorkflowAggregatedState.FAILED        => "Failed"
-      case WorkflowAggregatedState.KILLED        => "Killed"
-      case WorkflowAggregatedState.UNKNOWN       => "Unknown"
+      case WorkflowAggregatedState.UNINITIALIZED        => "Uninitialized"
+      case WorkflowAggregatedState.READY                => "Initializing"
+      case WorkflowAggregatedState.RUNNING              => "Running"
+      case WorkflowAggregatedState.PAUSING              => "Pausing"
+      case WorkflowAggregatedState.PAUSED               => "Paused"
+      case WorkflowAggregatedState.RESUMING             => "Resuming"
+      case WorkflowAggregatedState.COMPLETED            => "Completed"
+      case WorkflowAggregatedState.TERMINATED           => "Terminated"
+      case WorkflowAggregatedState.FAILED               => "Failed"
+      case WorkflowAggregatedState.KILLED               => "Killed"
+      case WorkflowAggregatedState.UNKNOWN              => "Unknown"
       case WorkflowAggregatedState.COMPLETED_FROM_CACHE => "CompletedFromCache"
       case WorkflowAggregatedState.Unrecognized(unrecognizedValue) =>
         s"Unrecognized($unrecognizedValue)"
@@ -111,20 +111,20 @@ object Utils extends LazyLogging {
 
   def stringToAggregatedState(str: String): WorkflowAggregatedState = {
     str.trim.toLowerCase match {
-      case "uninitialized" => WorkflowAggregatedState.UNINITIALIZED
-      case "ready"         => WorkflowAggregatedState.READY
-      case "initializing"  => WorkflowAggregatedState.READY // accept alias
-      case "running"       => WorkflowAggregatedState.RUNNING
-      case "pausing"       => WorkflowAggregatedState.PAUSING
-      case "paused"        => WorkflowAggregatedState.PAUSED
-      case "resuming"      => WorkflowAggregatedState.RESUMING
-      case "completed"     => WorkflowAggregatedState.COMPLETED
-      case "failed"        => WorkflowAggregatedState.FAILED
-      case "killed"        => WorkflowAggregatedState.KILLED
-      case "terminated"    => WorkflowAggregatedState.TERMINATED
-      case "unknown"       => WorkflowAggregatedState.UNKNOWN
+      case "uninitialized"      => WorkflowAggregatedState.UNINITIALIZED
+      case "ready"              => WorkflowAggregatedState.READY
+      case "initializing"       => WorkflowAggregatedState.READY // accept alias
+      case "running"            => WorkflowAggregatedState.RUNNING
+      case "pausing"            => WorkflowAggregatedState.PAUSING
+      case "paused"             => WorkflowAggregatedState.PAUSED
+      case "resuming"           => WorkflowAggregatedState.RESUMING
+      case "completed"          => WorkflowAggregatedState.COMPLETED
+      case "failed"             => WorkflowAggregatedState.FAILED
+      case "killed"             => WorkflowAggregatedState.KILLED
+      case "terminated"         => WorkflowAggregatedState.TERMINATED
+      case "unknown"            => WorkflowAggregatedState.UNKNOWN
       case "completedfromcache" => WorkflowAggregatedState.COMPLETED_FROM_CACHE
-      case other           => throw new IllegalArgumentException(s"Unrecognized state: $other")
+      case other                => throw new IllegalArgumentException(s"Unrecognized state: $other")
     }
   }
 
@@ -136,15 +136,15 @@ object Utils extends LazyLogging {
     */
   def maptoStatusCode(state: WorkflowAggregatedState): Byte = {
     state match {
-      case WorkflowAggregatedState.UNINITIALIZED => 0
-      case WorkflowAggregatedState.READY         => 0
-      case WorkflowAggregatedState.RUNNING       => 1
-      case WorkflowAggregatedState.PAUSED        => 2
-      case WorkflowAggregatedState.COMPLETED     => 3
-      case WorkflowAggregatedState.FAILED        => 4
-      case WorkflowAggregatedState.KILLED        => 5
+      case WorkflowAggregatedState.UNINITIALIZED        => 0
+      case WorkflowAggregatedState.READY                => 0
+      case WorkflowAggregatedState.RUNNING              => 1
+      case WorkflowAggregatedState.PAUSED               => 2
+      case WorkflowAggregatedState.COMPLETED            => 3
+      case WorkflowAggregatedState.FAILED               => 4
+      case WorkflowAggregatedState.KILLED               => 5
       case WorkflowAggregatedState.COMPLETED_FROM_CACHE => 6
-      case other                                 => -1
+      case other                                        => -1
     }
   }
 

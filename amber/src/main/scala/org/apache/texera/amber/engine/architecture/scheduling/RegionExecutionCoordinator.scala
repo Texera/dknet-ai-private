@@ -138,15 +138,13 @@ class RegionExecutionCoordinator(
     region.getOperators.foreach { op =>
       val opExecution = regionExecution.initOperatorExecution(op.id)
       // Cached regions do not create workers; synthesize operator-level metrics instead.
-      val outputMetrics = resourceConfig.portConfigs
-        .collect {
-          case (gpid, cfg: OutputPortConfig) if gpid.opId == op.id =>
-            // Emit metrics only for configured output ports in this cached region.
-            // Use -1 to preserve unknown cached counts in UI/stats instead of reporting 0.
-            val count = cfg.cachedTupleCount.getOrElse(-1L)
-            PortTupleMetricsMapping(gpid.portId, TupleMetrics(count, 0L))
-        }
-        .toSeq
+      val outputMetrics = resourceConfig.portConfigs.collect {
+        case (gpid, cfg: OutputPortConfig) if gpid.opId == op.id =>
+          // Emit metrics only for configured output ports in this cached region.
+          // Use -1 to preserve unknown cached counts in UI/stats instead of reporting 0.
+          val count = cfg.cachedTupleCount.getOrElse(-1L)
+          PortTupleMetricsMapping(gpid.portId, TupleMetrics(count, 0L))
+      }.toSeq
       val inputMetrics = op.inputPorts.keys
         // Use -1 to signal skipped/unknown input counts for cached operators.
         .map(pid => PortTupleMetricsMapping(pid, TupleMetrics(-1L, -1L)))

@@ -295,10 +295,11 @@ class OperatorPortCacheDao(sqlServer: SqlServer) {
     if (portHashes.isEmpty) {
       return 0
     }
-    val conditions = portHashes.map { case (portId, subdagHash) =>
-      OPERATOR_PORT_CACHE.GLOBAL_PORT_ID
-        .eq(portId)
-        .and(OPERATOR_PORT_CACHE.SUBDAG_HASH.eq(subdagHash))
+    val conditions = portHashes.map {
+      case (portId, subdagHash) =>
+        OPERATOR_PORT_CACHE.GLOBAL_PORT_ID
+          .eq(portId)
+          .and(OPERATOR_PORT_CACHE.SUBDAG_HASH.eq(subdagHash))
     }
     context
       .deleteFrom(OPERATOR_PORT_CACHE)

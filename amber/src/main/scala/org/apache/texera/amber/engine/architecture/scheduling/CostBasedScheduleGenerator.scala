@@ -302,8 +302,9 @@ class CostBasedScheduleGenerator(
           }
 
       val inputUrisFromOverrides: Map[GlobalPortIdentity, List[URI]] =
-        planningHints.inputPortUriOverrides.filter { case (inputPortId, _) =>
-          existingRegion.getPorts.contains(inputPortId)
+        planningHints.inputPortUriOverrides.filter {
+          case (inputPortId, _) =>
+            existingRegion.getPorts.contains(inputPortId)
         }
 
       val mergedInputUris: Map[GlobalPortIdentity, List[URI]] =

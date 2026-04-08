@@ -342,10 +342,13 @@ class WorkflowService(
     }
 
     val runtimeStatsUris =
-      executionIds.flatMap(eid => WorkflowExecutionsResource.getRuntimeStatsUriByExecutionId(eid).toList)
+      executionIds.flatMap(eid =>
+        WorkflowExecutionsResource.getRuntimeStatsUriByExecutionId(eid).toList
+      )
 
     // Invalidate cache artifacts produced by these executions.
-    val cacheInvalidation = cacheService.invalidateCacheBySourceExecutionsWithArtifacts(executionIds)
+    val cacheInvalidation =
+      cacheService.invalidateCacheBySourceExecutionsWithArtifacts(executionIds)
 
     val resultUris = executionIds
       .flatMap(WorkflowExecutionsResource.getResultUrisByExecutionId)

@@ -181,8 +181,9 @@ class WorkflowExecutionService(
       workflow = new WorkflowCompiler(workflowContext)
         .compile(request.logicalPlan)
       val cachedOutputsByPort = computeCachedOutputs(workflow.physicalPlan)
-      val cachedOutputs = cachedOutputsByPort.map { case (gpid, cached) =>
-        gpid.serializeAsString -> cached
+      val cachedOutputs = cachedOutputsByPort.map {
+        case (gpid, cached) =>
+          gpid.serializeAsString -> cached
       }
       workflowContext.workflowSettings =
         workflowContext.workflowSettings.copy(cachedOutputs = cachedOutputs)
@@ -205,14 +206,13 @@ class WorkflowExecutionService(
     executionReconfigurationService =
       new ExecutionReconfigurationService(client, executionStateStore, workflow)
     executionStatsService = new ExecutionStatsService(client, executionStateStore, workflow.context)
-    executionCacheService =
-      new ExecutionCacheService(
-        client,
-        cacheService,
-        workflow.context,
-        workflow.physicalPlan,
-        executionStateStore
-      )
+    executionCacheService = new ExecutionCacheService(
+      client,
+      cacheService,
+      workflow.context,
+      workflow.physicalPlan,
+      executionStateStore
+    )
     executionRuntimeService = new ExecutionRuntimeService(
       client,
       executionStateStore,

@@ -204,8 +204,7 @@ class OperatorPortCacheService(dao: OperatorPortCacheDao) {
     val cacheEntries = dao.listByWorkflow(workflowId.id, Int.MaxValue, 0)
     val entriesToDelete = cacheEntries.filter { entry =>
       val logicalOpIdOpt =
-        Try(GlobalPortIdentitySerde.deserializeFromString(entry.globalPortId))
-          .toOption
+        Try(GlobalPortIdentitySerde.deserializeFromString(entry.globalPortId)).toOption
           .map(_.opId.logicalOpId.id)
       logicalOpIdOpt.exists(normalizedIds.contains)
     }

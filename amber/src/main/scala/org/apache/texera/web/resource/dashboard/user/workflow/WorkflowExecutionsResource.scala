@@ -907,7 +907,8 @@ class WorkflowExecutionsResource {
       @Auth sessionUser: SessionUser
   ): Unit = {
     validateUserCanWriteWorkflow(sessionUser.getUser.getUid, wid)
-    val logicalOpIds = Option(request.logicalOpIds).getOrElse(List.empty).map(_.trim).filter(_.nonEmpty)
+    val logicalOpIds =
+      Option(request.logicalOpIds).getOrElse(List.empty).map(_.trim).filter(_.nonEmpty)
     if (logicalOpIds.isEmpty) {
       return
     }
@@ -930,17 +931,23 @@ class WorkflowExecutionsResource {
       @Auth sessionUser: SessionUser
   ): CacheInvalidationResponse = {
     validateUserCanWriteWorkflow(sessionUser.getUser.getUid, wid)
-    val workflow = try {
-      val workflowContext = new WorkflowContext(workflowId = WorkflowIdentity(wid.toLong))
-      new WorkflowCompiler(workflowContext).compile(request)
-    } catch {
-      case err: Throwable =>
-        throw new BadRequestException(s"Failed to compile workflow for cache invalidation: ${err.getMessage}")
-    }
+    val workflow =
+      try {
+        val workflowContext = new WorkflowContext(workflowId = WorkflowIdentity(wid.toLong))
+        new WorkflowCompiler(workflowContext).compile(request)
+      } catch {
+        case err: Throwable =>
+          throw new BadRequestException(
+            s"Failed to compile workflow for cache invalidation: ${err.getMessage}"
+          )
+      }
     val dao = new OperatorPortCacheDao(SqlServer.getInstance())
     val cacheService = new OperatorPortCacheService(dao)
     val removedCount =
-      cacheService.invalidateMismatchedCacheEntries(WorkflowIdentity(wid.toLong), workflow.physicalPlan)
+      cacheService.invalidateMismatchedCacheEntries(
+        WorkflowIdentity(wid.toLong),
+        workflow.physicalPlan
+      )
     CacheInvalidationResponse(removedCount)
   }
 

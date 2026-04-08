@@ -28,7 +28,10 @@ import org.apache.texera.amber.core.workflow.{
   WorkflowContext,
   WorkflowSettings
 }
-import org.apache.texera.amber.engine.architecture.scheduling.config.{OutputPortConfig, ResourceConfig}
+import org.apache.texera.amber.engine.architecture.scheduling.config.{
+  OutputPortConfig,
+  ResourceConfig
+}
 import org.apache.texera.amber.engine.architecture.scheduling.{
   PreSchedulingHints,
   Region,
@@ -292,7 +295,9 @@ object CacheReusePreSchedulingStep {
       case (connectedSubDAG, idx) =>
         val operators: Set[PhysicalOpIdentity] = connectedSubDAG.vertexSet().asScala.toSet
         val links: Set[PhysicalLink] = operators
-          .flatMap(opId => plan.getUpstreamPhysicalLinks(opId) ++ plan.getDownstreamPhysicalLinks(opId))
+          .flatMap(opId =>
+            plan.getUpstreamPhysicalLinks(opId) ++ plan.getDownstreamPhysicalLinks(opId)
+          )
           .filter(link => operators.contains(link.fromOpId))
         val physicalOps = operators.map(plan.getOperator)
         val ports: Set[GlobalPortIdentity] = physicalOps.flatMap { op =>

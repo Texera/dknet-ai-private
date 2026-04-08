@@ -98,10 +98,7 @@ trait PortCompletedHandler {
                     )
                   storageUriOpt.foreach { uri =>
                     // Prefer runtime statistics over storage reads for tuple counts.
-                    val tupleCount = operatorExecution
-                      .getStats
-                      .operatorStatistics
-                      .outputMetrics
+                    val tupleCount = operatorExecution.getStats.operatorStatistics.outputMetrics
                       .find(_.portId == msg.portId)
                       .map(_.tupleMetrics.count)
                     sendToClient(PortMaterialized(globalPortId, uri, tupleCount))

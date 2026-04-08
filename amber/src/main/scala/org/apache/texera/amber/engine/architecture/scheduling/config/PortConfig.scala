@@ -42,8 +42,7 @@ final case class OutputPortConfig(
     storageURI: URI,
     cachedTupleCount: Option[Long] = None,
     materialize: Boolean = true
-)
-    extends PortConfig {
+) extends PortConfig {
   override val storageURIs: List[URI] = List(storageURI)
 }
 
