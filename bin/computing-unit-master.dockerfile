@@ -44,6 +44,9 @@ RUN unzip amber/target/universal/amber-*.zip -d amber/target/
 
 FROM eclipse-temurin:11-jdk-jammy AS runtime
 
+# Build argument to enable/disable R support (default: false)
+ARG WITH_R_SUPPORT=true
+
 WORKDIR /texera/amber
 
 COPY --from=build /texera/amber/requirements.txt /tmp/requirements.txt
@@ -57,6 +60,9 @@ RUN apt-get update && apt-get install -y \
     libpq-dev \
     curl \
     unzip \
+    ttyd \
+    ca-certificates \
+    tmux \
     $(if [ "$WITH_R_SUPPORT" = "true" ]; then echo "\
     gfortran \
     build-essential \
@@ -70,6 +76,9 @@ RUN apt-get update && apt-get install -y \
     libpcre++-dev \
     libpango1.0-dev \
     libcurl4-openssl-dev \
+    libicu-dev \
+    cmake \
+    libuv1-dev \
     libfontconfig1-dev \
     libharfbuzz-dev \
     libfribidi-dev \
@@ -77,6 +86,7 @@ RUN apt-get update && apt-get install -y \
     libpng-dev \
     libtiff5-dev \
     libjpeg-dev \
+    libwebp-dev \
     unzip \
     openssh-client \
     gnupg \
@@ -85,10 +95,41 @@ RUN apt-get update && apt-get install -y \
     git"; fi) \
     && apt-get clean
 
+RUN install -m 0755 -d /etc/apt/keyrings && \
+    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg && \
+    chmod a+r /etc/apt/keyrings/docker.gpg && \
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
+    $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null && \
+    apt-get update && \
+    apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+
+# Install R 4.3.3 from source to pin the exact version (before conda to avoid PATH interference)
+RUN if [ "$WITH_R_SUPPORT" = "true" ]; then \
+        curl -fsSL https://cran.r-project.org/src/base/R-4/R-4.3.3.tar.gz -o /tmp/R-4.3.3.tar.gz && \
+        tar -xzf /tmp/R-4.3.3.tar.gz -C /tmp && \
+        cd /tmp/R-4.3.3 && \
+        ./configure --with-blas --with-lapack --enable-R-shlib && \
+        make -j$(nproc) && make install && \
+        rm -rf /tmp/R-4.3.3* && \
+        R --version; \
+    fi
+
+ENV CONDA_DIR /opt/conda
+RUN mkdir -p /tmp/miniconda3 && \
+    curl -fsSL https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -o /tmp/miniconda.sh && \
+    bash /tmp/miniconda.sh -b -u -p $CONDA_DIR && \
+    rm /tmp/miniconda.sh
+
+RUN /opt/conda/bin/conda config --add channels conda-forge && \
+    /opt/conda/bin/conda config --set channel_priority strict && \
+    /opt/conda/bin/conda config --remove channels defaults && \
+    /opt/conda/bin/conda init bash
+
 # Install Python packages
 RUN pip3 install --upgrade pip setuptools wheel && \
     pip3 install -r /tmp/requirements.txt && \
-    pip3 install -r /tmp/operator-requirements.txt
+    pip3 install -r /tmp/operator-requirements.txt && \
+    pip3 install biopython scanpy==1.11.5
 
 # Install texera-rudf and its dependencies (conditional)
 RUN if [ "$WITH_R_SUPPORT" = "true" ]; then \
@@ -114,11 +155,15 @@ RUN if [ "$WITH_R_SUPPORT" = "true" ]; then \
                     cat('  coro: ', as.character(packageVersion('coro')), '\n'); \
                     cat('  aws.s3: ', as.character(packageVersion('aws.s3')), '\n')" && \
         Rscript -e "options(repos = c(CRAN = 'https://cran.r-project.org')); \
-                    install.packages(c('BiocManager', 'R.utils', 'ggplotify', 'bench', 'reticulate', 'scSorter', 'igraph', 'leiden'), \
+                    install.packages(c('BiocManager', 'R.utils', 'ggplotify', 'bench', 'igraph', 'leiden'), \
                       Ncpus = parallel::detectCores()); \
+                    remotes::install_version('reticulate', version='1.36.1', upgrade='never', repos='https://cran.r-project.org', Ncpus=parallel::detectCores()); \
                     remotes::install_github('satijalab/seurat', ref = 'v5.2.1', upgrade = 'never'); \
-                    remotes::install_github('immunogenomics/harmony', upgrade = 'never'); \
-                    remotes::install_version('ggplot2', version = '3.5.1', upgrade = 'never', repos = 'https://cran.r-project.org'); \
+                    dir.create('~/.R', showWarnings = FALSE); \
+                    writeLines('CXX11STD = -std=gnu++14', '~/.R/Makevars'); \
+                    remotes::install_version('harmony', version = '0.1.1', upgrade = 'never', repos = 'https://cran.r-project.org'); \
+                    file.remove('~/.R/Makevars'); \
+                    remotes::install_version('ggplot2', version = '3.5.2', upgrade = 'never', repos = 'https://cran.r-project.org'); \
                     remotes::install_version('future', version = '1.34.0', upgrade = 'never', repos = 'https://cran.r-project.org'); \
                     remotes::install_version('jsonlite', version = '1.9.1', upgrade = 'never', repos = 'https://cran.r-project.org'); \
                     remotes::install_version('later', version = '1.4.1', upgrade = 'never', repos = 'https://cran.r-project.org'); \
@@ -134,11 +179,12 @@ RUN if [ "$WITH_R_SUPPORT" = "true" ]; then \
                     remotes::install_version('nlme', version = '3.1-162', upgrade = 'never', repos = 'https://cran.r-project.org'); \
                     remotes::install_version('MASS', version = '7.3-60', upgrade = 'never', repos = 'https://cran.r-project.org'); \
                     remotes::install_version('SeuratObject', version = '5.0.2', repos = 'https://cran.r-project.org'); \
+                    remotes::install_version('scSorter', version = '0.0.2', upgrade = 'never', repos = 'https://cran.r-project.org'); \
                     BiocManager::install(c('SingleCellExperiment', 'scDblFinder', 'glmGamPoi'), \
                       Ncpus = parallel::detectCores())" ; \
     fi
 
-ENV LD_LIBRARY_PATH=/usr/lib/R/lib:$LD_LIBRARY_PATH
+ENV LD_LIBRARY_PATH=/usr/local/lib/R/lib:$LD_LIBRARY_PATH
 
 # Copy the built texera binary from the build phase
 COPY --from=build /texera/.git /texera/amber/.git
@@ -157,5 +203,9 @@ COPY --from=build /texera/LICENSE /texera/NOTICE /texera/DISCLAIMER-WIP /texera/
 RUN rm -f conf/application.ini
 
 CMD ["bin/computing-unit-master"]
+CMD ["/bin/bash","-lc", "\
+  ttyd -p 7681 -t disableLeaveAlert=true /bin/bash & \
+  exec bin/computing-unit-master"]
 
 EXPOSE 8085
+EXPOSE 7681
