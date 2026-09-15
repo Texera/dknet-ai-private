@@ -282,8 +282,6 @@ class CuratedImageResourceSpec extends AnyFlatSpec with Matchers {
     ImageValidationClient.sourceDigestFrom(log) shouldBe None
   }
 
-  // Off until the UI ships, so a deployment that has not opted in starts no unit from a
-  // curated image -- including from a row left behind if it was enabled and turned off.
   // The regression this guards: the digest was read from the first marker line, while the
   // image's own start command -- which its author controls -- is echoed earlier. An image
   // whose Cmd carries a newline and a marker of its own could pass the check and still
@@ -301,12 +299,10 @@ class CuratedImageResourceSpec extends AnyFlatSpec with Matchers {
       "sha256:1111111111111111111111111111111111111111111111111111111111111111"
   }
 
-  "the feature flag" should "be off unless a deployment turns it on" in {
-    CuratedImageConfig.enabled shouldBe false
-  }
-
-  it should "start no unit from a curated image while it is off" in {
-    CuratedImageResource.readyImageFor(1) shouldBe None
+  // On by default now that the pages to manage and choose images have shipped. A
+  // deployment short of node disk, or unwilling to offer them, sets it back to false.
+  "the feature flag" should "be on unless a deployment turns it off" in {
+    CuratedImageConfig.enabled shouldBe true
   }
 
   // The states below are the ones a real cluster produces; the DeadlineExceeded shape was
