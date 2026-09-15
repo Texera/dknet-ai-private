@@ -126,7 +126,12 @@ metals.sbt
 .kubeconfig
 *.kubeconfig
 **/.kube/
-values-*.yaml    # Any environment-specific value overrides
+# Environment-specific value overrides, which is where real provider keys land.
+# The comment is on its own line: .gitignore has no trailing-comment syntax, so
+# putting it after the pattern made the pattern match nothing at all.
+# The values-*.yaml files already tracked stay tracked; ignore rules do not
+# apply to files git is already following.
+values-*.yaml
 
 # Ignore nested node modules
 **/node_modules/
@@ -138,6 +143,9 @@ agent-service/.yarn/
 agent-service/.yarnrc.yml
 agent-service/yarn.lock
 agent-service/CLAUDE.md
+
+# mcp-service build output (bundled for npx distribution)
+mcp-service/dist/
 
 # Ignoring local Claude Code artifacts (settings, worktrees, scratch)
 .claude/

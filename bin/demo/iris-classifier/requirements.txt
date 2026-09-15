@@ -1,0 +1,3 @@
+# CPU-only PyTorch is enough: the classifier is 3,000 parameters and the
+# embedding lookup is a gather, not a matmul.
+torch>=2.0
