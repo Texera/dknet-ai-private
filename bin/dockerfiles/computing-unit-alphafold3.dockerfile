@@ -127,12 +127,20 @@ RUN ${AF3_PYTHON} -m pip install --no-cache-dir \
       "tqdm" \
       "zstandard"
 
+# AlphaFold's own post-install step: it downloads the wwPDB chemical component
+# dictionary and writes the pickles alphafold3.constants loads at import time.
+# Without it, anything that imports the model code -- run_alphafold.py included --
+# fails on the first line with a missing chemical_component_sets.pickle.
+RUN build_data
+
 # Each import stands for one thing that could not have been arranged after the
 # build. pyarrow and pandas are the engine's, and are checked here because the
 # worker imports them before it ever reaches user code.
 RUN ${AF3_PYTHON} -c "\
 import sys, shutil, alphafold3, jax, pyarrow, numpy, pandas; \
 from alphafold3.data.tools import jackhmmer; \
+from alphafold3.constants import chemical_component_sets; \
+from alphafold3.data import featurisation; \
 assert sys.version_info[:2] >= (3, 12), sys.version; \
 assert shutil.which('jackhmmer'), 'jackhmmer not on PATH'; \
 print('python', sys.version.split()[0]); \
