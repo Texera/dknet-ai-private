@@ -48,6 +48,12 @@
 #   docker build -f computing-unit-alphafold3.dockerfile \
 #     --build-arg BASE_IMAGE=texera-local/computing-unit-master:staging \
 #     -t texera/computing-unit-master:alpha3-amd64 .
+#
+# The GPU variant, for structure prediction on an NVIDIA node, differs only in jax:
+#   docker build -f computing-unit-alphafold3.dockerfile \
+#     --build-arg BASE_IMAGE=texera-local/computing-unit-master:staging \
+#     --build-arg JAX_EXTRA="[cuda12]" \
+#     -t texera/computing-unit-master:alpha3-cuda-amd64 .
 
 ARG BASE_IMAGE=texera-local/computing-unit-master:staging
 FROM ${BASE_IMAGE}
@@ -99,16 +105,23 @@ RUN git clone --depth 1 --branch ${AF3_REF} \
     && git -C /opt/alphafold3 rev-parse HEAD > /opt/alphafold3-commit.txt \
     && cat /opt/alphafold3-commit.txt
 
-# --no-deps keeps out `jax[cuda12]`: roughly 3 GB of NVIDIA wheels that a cluster
-# without an NVIDIA GPU cannot use. The C++ extension is still compiled. AlphaFold's
-# own dependencies follow, with plain CPU jax substituted for the CUDA build.
+# --no-deps keeps AlphaFold's own jax pin out of the way, so the variant below decides
+# which jax is installed. The C++ extension is still compiled.
 RUN cd /opt/alphafold3 && ${AF3_PYTHON} -m pip install --no-cache-dir --no-deps .
+
+# Which jax to install. Empty is CPU jax, for a cluster with no NVIDIA GPU: the CUDA
+# build is roughly 3 GB of NVIDIA wheels such a node cannot use. "[cuda12]" is what
+# AlphaFold itself asks for on Linux, and what structure prediction needs. The
+# wheels carry their own CUDA libraries, so the base image needs none; the node
+# needs only an NVIDIA driver and the container toolkit.
+#   --build-arg JAX_EXTRA="[cuda12]"
+ARG JAX_EXTRA=""
 
 RUN ${AF3_PYTHON} -m pip install --no-cache-dir \
       "absl-py>=2.3.1" \
       "dm-haiku==0.0.17" \
       "etils[epath]" \
-      "jax==0.10.2" \
+      "jax${JAX_EXTRA}==0.10.2" \
       "rdkit==2025.9.4" \
       "tokamax==0.0.12" \
       "tqdm" \
@@ -127,6 +140,13 @@ print('alphafold3', alphafold3.__file__); \
 print('jax', jax.__version__, 'numpy', numpy.__version__); \
 print('pyarrow', pyarrow.__version__, 'pandas', pandas.__version__); \
 print('jackhmmer', shutil.which('jackhmmer'))"
+
+# AlphaFold's recommended XLA settings for GPU inference: preallocate most of the GPU
+# up front rather than growing into it, and skip the Triton GEMM path, which is
+# slower for this model. Both are ignored when jax runs on the CPU.
+ENV XLA_FLAGS="--xla_gpu_enable_triton_gemm=false" \
+    XLA_PYTHON_CLIENT_PREALLOCATE=true \
+    XLA_CLIENT_MEM_FRACTION=0.95
 
 # What actually moves the UDF worker onto 3.12. Read by UdfConfig; an empty value
 # means `python3`, which would be the system 3.10.
