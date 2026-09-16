@@ -65,6 +65,9 @@ object KubernetesConfig {
   // GPU resource key used directly in Kubernetes resource specifications
   val gpuResourceKey: String = conf.getString("kubernetes.computing-unit-gpu-resource-key")
 
+  // Node label key used to identify GPU model on each worker node
+  val gpuNodeLabelKey: String = conf.getString("kubernetes.computing-unit-gpu-node-label-key")
+
   // Per-user persistent storage: each user gets an isolated PVC created dynamically by the manager
   val userStorageEnabled: Boolean = conf.getBoolean("kubernetes.user-storage-enabled")
   val userStorageClass: String = conf.getString("kubernetes.user-storage-class")

@@ -19,6 +19,7 @@
 
 package org.apache.texera.web.resource.dashboard.admin.user
 
+import org.apache.texera.auth.{PermissionTemplate, UserPermission}
 import org.apache.texera.dao.SqlServer
 import org.apache.texera.dao.jooq.generated.enums.UserRoleEnum
 import org.apache.texera.dao.jooq.generated.tables.User.USER
@@ -47,15 +48,15 @@ case class UserInfo(
     lastLogin: java.time.OffsetDateTime, // will be null if never logged in
     accountCreation: java.time.OffsetDateTime,
     affiliation: String,
-    joiningReason: String
+    joiningReason: String,
+    permission: String // JSON string representing user permissions
 )
 
 object AdminUserResource {
-  private def context =
-    SqlServer
-      .getInstance()
-      .createDSLContext()
-  private def userDao = new UserDao(context.configuration)
+  final private lazy val context = SqlServer
+    .getInstance()
+    .createDSLContext()
+  final private lazy val userDao = new UserDao(context.configuration)
 }
 
 @Path("/admin/user")
@@ -83,7 +84,8 @@ class AdminUserResource {
         USER_LAST_ACTIVE_TIME.LAST_ACTIVE_TIME,
         USER.ACCOUNT_CREATION_TIME,
         USER.AFFILIATION,
-        USER.JOINING_REASON
+        USER.JOINING_REASON,
+        USER.PERMISSION
       )
       .from(USER)
       .leftJoin(USER_LAST_ACTIVE_TIME)
@@ -104,6 +106,7 @@ class AdminUserResource {
     updatedUser.setEmail(user.getEmail)
     updatedUser.setRole(user.getRole)
     updatedUser.setComment(user.getComment)
+    updatedUser.setPermission(user.getPermission)
     userDao.update(updatedUser)
 
     if (roleChanged)
@@ -149,5 +152,18 @@ class AdminUserResource {
   @Path("/deleteCollection/{eid}")
   def deleteCollection(@PathParam("eid") eid: Integer): Unit = {
     deleteExecutionCollection(eid)
+  }
+
+  /**
+    * Returns the permission template that describes all available user permissions
+    * including their types, possible values, and default values.
+    *
+    * @return PermissionTemplate containing the schema for all permissions
+    */
+  @GET
+  @Path("/permission")
+  @Produces(Array(MediaType.APPLICATION_JSON))
+  def getPermissionTemplate: PermissionTemplate = {
+    UserPermission.permissionTemplate
   }
 }

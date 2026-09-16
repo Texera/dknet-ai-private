@@ -17,7 +17,7 @@
  * under the License.
  */
 
-import { ChangeDetectorRef, Component, OnInit, NgZone } from "@angular/core";
+import { ChangeDetectorRef, Component, OnInit, OnDestroy, NgZone } from "@angular/core";
 import { take } from "rxjs/operators";
 import { WorkflowComputingUnitManagingService } from "../../../common/service/computing-unit/workflow-computing-unit/workflow-computing-unit-managing.service";
 import {
@@ -57,6 +57,9 @@ import {
   getJvmMemorySliderConfig,
 } from "../../../common/util/computing-unit.util";
 import { PvePackageResponse, WorkflowPveService } from "../../service/virtual-environment/virtual-environment.service";
+import { ComputingUnitSshService } from "../../../common/service/computing-unit/computing-unit-status/computing-unit-ssh.service";
+import { UserService } from "../../../common/service/user/user.service";
+import { DomSanitizer, SafeResourceUrl } from "@angular/platform-browser";
 import { NgClass, NgIf, NgFor, DecimalPipe, TitleCasePipe } from "@angular/common";
 import { ɵNzTransitionPatchDirective } from "ng-zorro-antd/core/transition-patch";
 import { NzPopoverDirective } from "ng-zorro-antd/popover";
@@ -135,7 +138,7 @@ type PveDraft = {
     TitleCasePipe,
   ],
 })
-export class ComputingUnitSelectionComponent implements OnInit {
+export class ComputingUnitSelectionComponent implements OnInit, OnDestroy {
   // variables for creating a virtual environment
   pves: PveDraft[] = [];
   systemPackages: { name: string; version: string }[] = [];
@@ -149,12 +152,18 @@ export class ComputingUnitSelectionComponent implements OnInit {
   selectedComputingUnit: DashboardWorkflowComputingUnit | null = null;
   allComputingUnits: DashboardWorkflowComputingUnit[] = [];
 
+  // SSH Terminal properties
+  sshModalVisible = false;
+  sshModalTitle = "SSH Terminal";
+  terminalUrl: SafeResourceUrl | null = null;
+
   // variables for creating a computing unit
   addComputeUnitModalVisible = false;
   newComputingUnitName: string = "";
   selectedMemory: string = "";
   selectedCpu: string = "";
   selectedGpu: string = "0"; // Default to no GPU
+  selectedGpuModel: string = "Any"; // Default to any GPU model
   selectedJvmMemorySize: string = "1G"; // Initial JVM memory size
   selectedComputingUnitType?: WorkflowComputingUnitType; // Selected computing unit type
   selectedShmSize: string = "64Mi"; // Shared memory size
@@ -178,6 +187,7 @@ export class ComputingUnitSelectionComponent implements OnInit {
   cpuOptions: string[] = [];
   memoryOptions: string[] = [];
   gpuOptions: string[] = []; // Add GPU options array
+  gpuModelOptions: string[] = [];
 
   constructor(
     private computingUnitService: WorkflowComputingUnitManagingService,
@@ -190,7 +200,10 @@ export class ComputingUnitSelectionComponent implements OnInit {
     private cdr: ChangeDetectorRef,
     private computingUnitActionsService: ComputingUnitActionsService,
     private workflowPveService: WorkflowPveService,
-    private ngZone: NgZone
+    private ngZone: NgZone,
+    private sshService: ComputingUnitSshService,
+    private userService: UserService,
+    private sanitizer: DomSanitizer
   ) {}
 
   ngOnInit(): void {
@@ -375,6 +388,39 @@ export class ComputingUnitSelectionComponent implements OnInit {
     return this.gpuOptions.length > 1 || (this.gpuOptions.length === 1 && this.gpuOptions[0] !== "0");
   }
 
+  // Determines if the GPU model dropdown should be shown.
+  // Only shown when the user has selected at least one GPU AND the backend
+  // returned more than just the "Any" option (i.e., at least one labeled node exists).
+  showGpuModelSelection(): boolean {
+    return this.selectedGpu !== "0" && this.gpuModelOptions.length > 1;
+  }
+
+  // Called when the GPU count dropdown value changes.
+  // Re-fetches the list of currently available GPU models for the new count.
+  onGpuCountChange(newCount: string): void {
+    this.selectedGpu = newCount;
+    this.selectedGpuModel = "Any";
+    this.gpuModelOptions = [];
+
+    if (newCount === "0") {
+      return;
+    }
+
+    this.computingUnitService
+      .getAvailableGpuModels(+newCount)
+      .pipe(untilDestroyed(this))
+      .subscribe({
+        next: models => {
+          this.gpuModelOptions = models;
+          this.selectedGpuModel = models[0] ?? "Any";
+        },
+        error: () => {
+          this.gpuModelOptions = ["Any"];
+          this.selectedGpuModel = "Any";
+        },
+      });
+  }
+
   showAddComputeUnitModalVisible(): void {
     this.addComputeUnitModalVisible = true;
   }
@@ -419,6 +465,7 @@ export class ComputingUnitSelectionComponent implements OnInit {
       gpu: this.selectedGpu,
       jvmMemorySize: this.selectedJvmMemorySize,
       shmSize: `${this.shmSizeValue}${this.shmSizeUnit}`,
+      gpuModel: this.selectedGpuModel,
       localUri: this.localComputingUnitUri,
     };
 
@@ -1116,5 +1163,31 @@ export class ComputingUnitSelectionComponent implements OnInit {
     };
 
     deleteNext();
+  }
+
+  ngOnDestroy(): void {
+    this.closeSshTerminal();
+  }
+
+  /**
+   * Open SSH Terminal modal
+   */
+  openSshTerminal(unit: DashboardWorkflowComputingUnit): void {
+    this.sshModalTitle = `SSH Terminal - ${unit.computingUnit.name}`;
+
+    const uid = this.userService.getCurrentUser()?.uid || 1;
+    const cuid = unit.computingUnit.cuid;
+    const url = this.sshService.getComputingUnitSshUrl(uid, cuid);
+    this.terminalUrl = this.sanitizer.bypassSecurityTrustResourceUrl(url);
+
+    this.sshModalVisible = true;
+  }
+
+  /**
+   * Close SSH Terminal modal
+   */
+  closeSshTerminal(): void {
+    this.sshModalVisible = false;
+    this.terminalUrl = null;
   }
 }

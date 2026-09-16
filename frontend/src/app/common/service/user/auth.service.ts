@@ -128,15 +128,30 @@ export class AuthService {
     }
 
     const role = this.jwtHelperService.decodeToken(token).role;
+    const uid = this.jwtHelperService.decodeToken(token).userId;
     const email = this.jwtHelperService.decodeToken(token).email;
-    if (this.config.env.inviteOnly && role == Role.INACTIVE) {
-      this.modal.confirm({
-        nzTitle: "You Need Access",
-        nzContent:
-          "Currently the platform is invitation-only. Please request access from the platform admin or switch to an account that already has access.",
-        nzOkText: "Send request to Admin",
-        nzCancelText: "Cancel",
-        nzOnOk: () => this.gmailService.notifyUnauthorizedLogin(email),
+    const name = this.jwtHelperService.decodeToken(token).sub;
+
+    if (this.config.env.inviteOnly && role === Role.INACTIVE) {
+      this.checkRegistrationRequired(uid).subscribe(required => {
+        if (required) {
+          this.openRegistrationModal(uid, email, name);
+        } else {
+          this.modal.info({
+            nzTitle: "Access Pending",
+            nzContent: `
+            Your account is still inactive, and we already received your request.
+            Please wait for an admin to approve your access.
+          `,
+            nzOkText: "OK",
+            nzMaskClosable: false,
+            nzClosable: false,
+            nzOnOk: () => {
+              this.logout();
+              return true;
+            },
+          });
+        }
       });
 
       return this.logout();
@@ -151,6 +166,7 @@ export class AuthService {
       googleAvatar: this.jwtHelperService.decodeToken(token).googleAvatar,
       role: role,
       comment: this.jwtHelperService.decodeToken(token).comment,
+      joiningReason: this.jwtHelperService.decodeToken(token).joiningReason,
     };
   }
 

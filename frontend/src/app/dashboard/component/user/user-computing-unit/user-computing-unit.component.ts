@@ -99,6 +99,7 @@ export class UserComputingUnitComponent implements OnInit {
   selectedMemory: string = "";
   selectedCpu: string = "";
   selectedGpu: string = "0"; // Default to no GPU
+  selectedGpuModel: string = "Any"; // Default to any GPU model
   selectedJvmMemorySize: string = "1G"; // Initial JVM memory size
   selectedComputingUnitType?: WorkflowComputingUnitType; // Selected computing unit type
   selectedShmSize: string = "64Mi"; // Shared memory size
@@ -117,7 +118,8 @@ export class UserComputingUnitComponent implements OnInit {
   // cpu&memory limit options from backend
   cpuOptions: string[] = [];
   memoryOptions: string[] = [];
-  gpuOptions: string[] = []; // Add GPU options array
+  gpuOptions: string[] = [];
+  gpuModelOptions: string[] = [];
 
   constructor(
     private notificationService: NotificationService,
@@ -221,6 +223,7 @@ export class UserComputingUnitComponent implements OnInit {
       gpu: this.selectedGpu,
       jvmMemorySize: this.selectedJvmMemorySize,
       shmSize: `${this.shmSizeValue}${this.shmSizeUnit}`,
+      gpuModel: this.selectedGpuModel,
       localUri: this.localComputingUnitUri,
     };
 
@@ -238,8 +241,35 @@ export class UserComputingUnitComponent implements OnInit {
   }
 
   showGpuSelection(): boolean {
-    // Don't show GPU selection if there are no options or only "0" option
     return this.gpuOptions.length > 1 || (this.gpuOptions.length === 1 && this.gpuOptions[0] !== "0");
+  }
+
+  showGpuModelSelection(): boolean {
+    return this.selectedGpu !== "0" && this.gpuModelOptions.length > 1;
+  }
+
+  onGpuCountChange(newCount: string): void {
+    this.selectedGpu = newCount;
+    this.selectedGpuModel = "Any";
+    this.gpuModelOptions = [];
+
+    if (newCount === "0") {
+      return;
+    }
+
+    this.computingUnitService
+      .getAvailableGpuModels(+newCount)
+      .pipe(untilDestroyed(this))
+      .subscribe({
+        next: models => {
+          this.gpuModelOptions = models;
+          this.selectedGpuModel = models[0] ?? "Any";
+        },
+        error: () => {
+          this.gpuModelOptions = ["Any"];
+          this.selectedGpuModel = "Any";
+        },
+      });
   }
 
   showAddComputeUnitModalVisible(): void {

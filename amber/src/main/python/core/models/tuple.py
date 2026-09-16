@@ -320,6 +320,16 @@ class Tuple:
                         field_value, bytes
                     ):
                         self[field_name] = b"pickle    " + pickle.dumps(field_value)
+                    elif (
+                        field_type == AttributeType.LARGE_BINARY
+                        and isinstance(field_value, str)
+                        and field_value.startswith("s3://")
+                    ):
+                        # A UDF may emit a bare S3 URI string for a LARGE_BINARY
+                        # field (e.g. an R UDF producing a new large binary, where
+                        # the runtime cannot wrap it into a largebinary itself).
+                        # Coerce it to a largebinary reference so it matches schema.
+                        self[field_name] = largebinary(field_value)
             except Exception as err:
                 # Surpass exceptions during cast.
                 # Keep the value as it is if the cast fails, and continue to attempt

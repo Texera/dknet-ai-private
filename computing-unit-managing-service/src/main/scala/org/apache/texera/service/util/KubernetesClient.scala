@@ -79,6 +79,76 @@ object KubernetesClient {
       .getOrElse(Map.empty[String, String])
   }
 
+  /**
+    * Returns GPU model labels for nodes that have enough remaining GPU capacity.
+    *
+    * For each node carrying the configured GPU node label, the method computes:
+    *   remaining = allocatable GPUs − GPUs already requested by running pods
+    * and includes the model in the result only when remaining >= requestedCount.
+    *
+    * "Any" is always prepended so the caller can opt out of model pinning.
+    *
+    * @param requestedCount number of GPUs the user wants to reserve
+    * @return sorted list of available GPU model strings, prefixed with "Any"
+    */
+  def getAvailableGpuModels(requestedCount: Int): List[String] = {
+    val labelKey = KubernetesConfig.gpuNodeLabelKey
+    val gpuKey = KubernetesConfig.gpuResourceKey
+
+    val nodes = client
+      .nodes()
+      .list()
+      .getItems
+      .asScala
+      .filter(n => Option(n.getMetadata.getLabels).exists(_.containsKey(labelKey)))
+
+    val runningPods = client
+      .pods()
+      .inNamespace(namespace)
+      .list()
+      .getItems
+      .asScala
+      .filterNot { p =>
+        val phase = Option(p.getStatus.getPhase).getOrElse("")
+        phase == "Succeeded" || phase == "Failed"
+      }
+
+    val usedPerNode: Map[String, Int] = runningPods
+      .groupBy(p => Option(p.getSpec.getNodeName).getOrElse(""))
+      .filter(_._1.nonEmpty)
+      .map {
+        case (nodeName, pods) =>
+          val total = pods
+            .flatMap(_.getSpec.getContainers.asScala)
+            .map { c =>
+              Option(c.getResources.getLimits)
+                .flatMap(l => Option(l.get(gpuKey)))
+                .flatMap(q => Option(q.getAmount).flatMap(_.toIntOption))
+                .getOrElse(0)
+            }
+            .sum
+          nodeName -> total
+      }
+      .toMap
+
+    val available = nodes
+      .flatMap { node =>
+        val name = node.getMetadata.getName
+        val model = node.getMetadata.getLabels.get(labelKey)
+        val total = Option(node.getStatus.getAllocatable)
+          .flatMap(a => Option(a.get(gpuKey)))
+          .flatMap(q => Option(q.getAmount).flatMap(_.toIntOption))
+          .getOrElse(0)
+        val remaining = total - usedPerNode.getOrElse(name, 0)
+        if (remaining >= requestedCount) Some(model) else None
+      }
+      .distinct
+      .sorted
+      .toList
+
+    "Any" :: available
+  }
+
   def createPod(
       cuid: Int,
       uid: Int,
@@ -86,7 +156,8 @@ object KubernetesClient {
       memoryLimit: String,
       gpuLimit: String,
       envVars: Map[String, Any],
-      shmSize: Option[String] = None
+      shmSize: Option[String] = None,
+      gpuModel: Option[String] = None
   ): Pod = {
     val podName = generatePodName(cuid)
     if (getPodByName(podName).isDefined) {
@@ -134,6 +205,16 @@ object KubernetesClient {
       specBuilder.withRuntimeClassName("nvidia")
     }
 
+    // Pin the pod to a specific GPU model node when the user requested one
+    if (gpuLimit != "0") {
+      gpuModel.filter(m => m.nonEmpty && m != "Any").foreach { model =>
+        specBuilder.withNodeSelector(
+          Map(KubernetesConfig.gpuNodeLabelKey -> model).asJava
+        )
+      }
+    }
+
+    // Add main computing unit container
     val containerBuilder = specBuilder
       .addNewContainer()
       .withName("computing-unit-master")
@@ -141,6 +222,7 @@ object KubernetesClient {
       .withImagePullPolicy(KubernetesConfig.computingUnitImagePullPolicy)
       .addNewPort()
       .withContainerPort(KubernetesConfig.computeUnitPortNumber)
+      .withName("http")
       .endPort()
       .withEnv(envList)
       .withResources(resourceBuilder.build())

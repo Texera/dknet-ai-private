@@ -42,6 +42,7 @@ import org.apache.texera.dao.jooq.generated.Tables._
 import org.apache.texera.dao.jooq.generated.enums.UserRoleEnum
 import org.apache.texera.dao.jooq.generated.tables.daos.WorkflowExecutionsDao
 import org.apache.texera.dao.jooq.generated.tables.pojos.{WorkflowExecutions, User => UserPojo}
+import org.apache.texera.service.util.LargeBinaryManager
 import org.apache.texera.web.dao.OperatorPortCacheDao
 import org.apache.texera.web.model.http.request.result.ResultExportRequest
 import org.apache.texera.web.model.websocket.request.LogicalPlanPojo
@@ -441,6 +442,11 @@ object WorkflowExecutionsResource {
         // Document already deleted – safe to ignore
       }
     }
+
+    // Delete these executions' large binaries from object storage. Mirrors the cleanup
+    // in WorkflowService.clearExecutionResources and WorkflowResource so this path does
+    // not leak orphaned objects under objects/{executionId}/.
+    eIdsLong.foreach(LargeBinaryManager.deleteByExecution)
   }
 
   /**

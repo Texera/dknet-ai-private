@@ -127,6 +127,20 @@ spec:
     - matches:
         - path:
             type: PathPrefix
+            value: /wsapi/cu-ssh
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplacePrefixMatch
+              replacePrefixMatch: /
+      backendRefs:
+        - group: gateway.envoyproxy.io
+          kind: Backend
+          name: texera-dynamic-backend
+    - matches:
+        - path:
+            type: PathPrefix
             value: /wsapi
         - path:
             type: RegularExpression

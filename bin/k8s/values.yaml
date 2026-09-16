@@ -113,6 +113,15 @@ lakefs:
           access_key_id: texera_minio
           secret_access_key: password
 
+# Lakekeeper (Iceberg REST catalog) is disabled — this deployment uses the Postgres
+# Iceberg catalog (texera_iceberg_catalog on the bundled Postgres), where existing
+# workflow-result data lives. Upstream's apache sync defaults to Lakekeeper; keep this
+# disabled (recurring sync conflict) unless deliberately migrating the catalog.
+lakekeeper:
+  enabled: false
+lakekeeperInit:
+  enabled: false
+
 # Part2: configurations of Texera-related micro services
 texeraImages:
   pullPolicy: Always
@@ -168,6 +177,7 @@ configService:
     port: 9094
 
 chatAssistantService:
+  enabled: true
   name: chat-assistant-service
   numOfPods: 1
   imageName: texera/chat-assistant-service:cluster   # <─ use the cluster tag
@@ -283,16 +293,6 @@ texeraEnvVars:
     value: "false"
   - name: KUBERNETES_COMPUTING_UNIT_ENABLED
     value: "true"
-  - name: KUBERNETES_USER_STORAGE_ENABLED
-    value: "false"
-  - name: KUBERNETES_USER_STORAGE_CLASS
-    value: "bodleian-dknet-2"
-  - name: KUBERNETES_USER_STORAGE_SIZE
-    value: "10Gi"
-  - name: KUBERNETES_USER_STORAGE_MOUNT_PATH
-    value: "/user-data"
-  - name: KUBERNETES_USER_STORAGE_ALLOWED_UIDS
-    value: ""  # empty = all users; e.g. "9" or "9,12,15" to restrict
   - name: KUBERNETES_IMAGE_PULL_POLICY
     value: "IfNotPresent"
   - name: GUI_WORKFLOW_WORKSPACE_PYTHON_LANGUAGE_SERVER_PORT

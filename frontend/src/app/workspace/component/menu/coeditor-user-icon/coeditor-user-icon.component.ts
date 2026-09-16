@@ -47,7 +47,7 @@ import { NgIf } from "@angular/common";
   ],
 })
 export class CoeditorUserIconComponent {
-  @Input() coeditor: Coeditor = { name: "", email: "", uid: -1, role: Role.REGULAR, comment: "", clientId: "0" };
+  @Input() coeditor: Coeditor = { name: "", email: "", uid: -1, role: Role.REGULAR, comment: "", clientId: "0", joiningReason: "" };
 
   constructor(public coeditorPresenceService: CoeditorPresenceService) {}
 

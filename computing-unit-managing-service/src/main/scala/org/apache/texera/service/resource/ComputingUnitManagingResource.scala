@@ -35,7 +35,7 @@ import org.apache.texera.config.KubernetesConfig.{
   maxNumOfRunningComputingUnitsPerUser,
   memoryLimitOptions
 }
-import org.apache.texera.config.{ComputingUnitConfig, KubernetesConfig}
+import org.apache.texera.config.{AuthConfig, ComputingUnitConfig, KubernetesConfig}
 import org.apache.texera.dao.SqlServer
 import org.apache.texera.dao.SqlServer.withTransaction
 import org.apache.texera.dao.jooq.generated.enums.{PrivilegeEnum, WorkflowComputingUnitTypeEnum}
@@ -64,6 +64,23 @@ object ComputingUnitManagingResource {
     SqlServer
       .getInstance()
       .createDSLContext()
+
+  // JDK 17 module-opens the computing-unit JVM needs (Kryo serialization, Apache
+  // Arrow off-heap memory, Pekko). The CU image's launcher reads JAVA_OPTS and
+  // passes it straight to `java`, but the dist's conf/application.ini (which would
+  // otherwise carry these) is stripped in computing-unit-master.dockerfile, so they
+  // must be injected here. Without --add-opens=java.base/java.nio, the ArrowSource
+  // result-read path throws InaccessibleObjectException and crashes the CU JVM.
+  // Keep in sync with .jvmopts at the repo root.
+  private val jdk17AddOpens: String = Seq(
+    "--add-opens=java.base/java.lang=ALL-UNNAMED",
+    "--add-opens=java.base/java.lang.invoke=ALL-UNNAMED",
+    "--add-opens=java.base/java.util=ALL-UNNAMED",
+    "--add-opens=java.base/java.util.concurrent.atomic=ALL-UNNAMED",
+    "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED",
+    "--add-opens=java.base/java.nio=ALL-UNNAMED",
+    "--add-opens=java.base/jdk.internal.misc=ALL-UNNAMED"
+  ).mkString(" ")
 
   private def icebergEnvironmentVariables: Map[String, Any] = {
     val base = Map[String, Any](
@@ -118,9 +135,9 @@ object ComputingUnitManagingResource {
       EnvironmentalVariable.ENV_MAX_WORKFLOW_WEBSOCKET_REQUEST_PAYLOAD_SIZE_KB -> EnvironmentalVariable
         .get(EnvironmentalVariable.ENV_MAX_WORKFLOW_WEBSOCKET_REQUEST_PAYLOAD_SIZE_KB)
         .get,
-      EnvironmentalVariable.ENV_AUTH_JWT_SECRET -> EnvironmentalVariable
-        .get(EnvironmentalVariable.ENV_AUTH_JWT_SECRET)
-        .get
+      // Fork: source the CU's JWT secret from AuthConfig (deployment config) rather
+      // than re-reading the ENV_AUTH_JWT_SECRET environment variable.
+      EnvironmentalVariable.ENV_AUTH_JWT_SECRET -> AuthConfig.jwtSecretKey
     )
 
   case class WorkflowComputingUnitCreationParams(
@@ -131,7 +148,8 @@ object ComputingUnitManagingResource {
       gpuLimit: String,
       jvmMemorySize: String,
       shmSize: String,
-      uri: Option[String] = None
+      uri: Option[String] = None,
+      gpuModel: Option[String] = None
   )
 
   case class WorkflowComputingUnitResourceLimit(
@@ -265,6 +283,32 @@ class ComputingUnitManagingResource {
   def getComputingUnitTypes(
       @Auth @unused user: SessionUser
   ): ComputingUnitTypesResponse = ComputingUnitTypesResponse(getSupportedComputingUnitTypes)
+
+  /**
+    * Returns GPU model labels for nodes that currently have enough free GPU capacity.
+    *
+    * The list is recomputed on every call by querying live K8s node state and running pod
+    * GPU resource usage, so it reflects real-time availability.  "Any" is always the first
+    * entry and means the scheduler picks the node freely.
+    *
+    * @param gpuCount number of GPUs the user intends to request (default 1)
+    * @return JSON array of available GPU model strings, e.g. ["Any","H200","A40"]
+    */
+  @GET
+  @RolesAllowed(Array("REGULAR", "ADMIN"))
+  @Produces(Array(MediaType.APPLICATION_JSON))
+  @Path("/available-gpu-models")
+  def getAvailableGpuModels(
+      @QueryParam("gpuCount") @DefaultValue("1") gpuCount: Int,
+      @Auth @unused user: SessionUser
+  ): List[String] = {
+    if (!KubernetesConfig.kubernetesComputingUnitEnabled) return List("Any")
+    try {
+      KubernetesClient.getAvailableGpuModels(gpuCount)
+    } catch {
+      case _: Throwable => List("Any")
+    }
+  }
 
   /**
     * Create a new pod for the given user ID.
@@ -457,12 +501,13 @@ class ComputingUnitManagingResource {
             param.gpuLimit,
             computingUnitEnvironmentVariables ++ Map(
               EnvironmentalVariable.ENV_USER_JWT_TOKEN -> userToken,
-              EnvironmentalVariable.ENV_JAVA_OPTS -> s"-Xmx${param.jvmMemorySize}",
+              EnvironmentalVariable.ENV_JAVA_OPTS -> s"-Xmx${param.jvmMemorySize} $jdk17AddOpens",
               EnvironmentalVariable.ENV_LAKEFS_AUTH_USERNAME -> StorageConfig.lakefsUsername,
               EnvironmentalVariable.ENV_LAKEFS_AUTH_PASSWORD -> StorageConfig.lakefsPassword,
               EnvironmentalVariable.ENV_LAKEFS_ENDPOINT -> StorageConfig.lakefsEndpoint
             ),
-            Some(param.shmSize)
+            Some(param.shmSize),
+            param.gpuModel
           )
 
         } catch {

@@ -19,8 +19,8 @@
 
 import { Injectable } from "@angular/core";
 import { HttpClient } from "@angular/common/http";
-import { Observable, of, ReplaySubject } from "rxjs";
 import { AppSettings } from "../../app-setting";
+import { Observable, of, ReplaySubject } from "rxjs";
 import { Role, User } from "../../type/user";
 import { AuthService } from "./auth.service";
 import { GuiConfigService } from "../gui-config.service";
@@ -42,7 +42,7 @@ export class UserService {
   constructor(
     private http: HttpClient,
     private authService: AuthService,
-    private config: GuiConfigService
+    private config: GuiConfigService,
   ) {
     const user = this.authService.loginWithExistingToken();
     this.changeUser(user);

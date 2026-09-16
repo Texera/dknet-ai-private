@@ -106,6 +106,7 @@ CREATE TABLE IF NOT EXISTS "user"
     google_avatar           VARCHAR(100),
     role                    user_role_enum NOT NULL DEFAULT 'INACTIVE',
     comment                 TEXT,
+    permission              JSONB NOT NULL DEFAULT '{}'::jsonb,
     account_creation_time   TIMESTAMPTZ NOT NULL DEFAULT now(),
     affiliation             VARCHAR(128),
     joining_reason          VARCHAR(500),

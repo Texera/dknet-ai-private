@@ -120,11 +120,27 @@
           <span>Select #GPU(s)</span>
           <nz-select
             class="gpu-selection"
-            [(ngModel)]="selectedGpu">
+            [ngModel]="selectedGpu"
+            (ngModelChange)="onGpuCountChange($event)">
             <nz-option
               *ngFor="let option of gpuOptions"
               [nzValue]="option"
               [nzLabel]="option">
+            </nz-option>
+          </nz-select>
+        </div>
+
+        <div
+          *ngIf="showGpuModelSelection()"
+          class="select-unit">
+          <span>Select GPU Model</span>
+          <nz-select
+            class="gpu-model-selection"
+            [(ngModel)]="selectedGpuModel">
+            <nz-option
+              *ngFor="let model of gpuModelOptions"
+              [nzValue]="model"
+              [nzLabel]="model">
             </nz-option>
           </nz-select>
         </div>

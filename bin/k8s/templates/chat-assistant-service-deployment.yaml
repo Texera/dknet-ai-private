@@ -15,6 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
+{{- if .Values.chatAssistantService.enabled }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -60,3 +61,4 @@ spec:
                 port: {{ .Values.chatAssistantService.service.port }}
               initialDelaySeconds: 5
               periodSeconds: 5
+{{- end }}

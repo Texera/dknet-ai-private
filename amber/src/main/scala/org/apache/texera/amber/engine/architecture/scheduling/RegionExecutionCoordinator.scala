@@ -157,7 +157,7 @@ class RegionExecutionCoordinator(
   private def recordCachedOutputPortResults(resourceConfig: ResourceConfig): Unit = {
     resourceConfig.portConfigs.collect {
       case (gpid, cfg: OutputPortConfig) =>
-        val storageUri = cfg.storageURIBase
+        val storageUri = VFSURIFactory.resultURI(cfg.storageURIBase)
         WorkflowExecutionsResource.insertOperatorPortResultUri(
           eid = executionId,
           globalPortId = gpid,
@@ -579,7 +579,7 @@ class RegionExecutionCoordinator(
         WorkflowExecutionsResource.insertOperatorPortResultUri(
           eid = executionId,
           globalPortId = outputPortId,
-          uri = outputCfg.storageURIBase
+          uri = VFSURIFactory.resultURI(outputCfg.storageURIBase)
         )
       case _ =>
     }

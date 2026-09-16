@@ -63,19 +63,16 @@ object JwtParser extends LazyLogging {
     val role = UserRoleEnum.valueOf(claims.getClaimValue("role").asInstanceOf[String])
     val googleId = claims.getClaimValue("googleId", classOf[String])
     val googleAvatar = claims.getClaimValue("googleAvatar", classOf[String])
-    val user = new User(
-      userId,
-      userName,
-      email,
-      null,
-      googleId,
-      googleAvatar,
-      role,
-      null,
-      null,
-      null,
-      null
-    )
+    // Build via setters (not the positional jooq constructor) so this keeps compiling
+    // when the User table gains columns in this fork — e.g. the deployment's `permission`
+    // JSONB column, which is intentionally left unset here.
+    val user = new User()
+    user.setUid(userId)
+    user.setName(userName)
+    user.setEmail(email)
+    user.setGoogleId(googleId)
+    user.setGoogleAvatar(googleAvatar)
+    user.setRole(role)
     new SessionUser(user)
   }
 }

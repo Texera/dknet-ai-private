@@ -125,7 +125,7 @@ for dockerfile in "${dockerfiles[@]}"; do
     continue
   fi
 
-  image="texera/$service_name:$FULL_TAG"
+  image="kunwp1/$service_name:$FULL_TAG"
   echo "👉 Building $image from $dockerfile"
 
   docker buildx build \
@@ -138,7 +138,7 @@ done
 
 # Build pylsp service (directory: pylsp)
 if should_build "pylsp"; then
-  image="texera/pylsp:$FULL_TAG"
+  image="kunwp1/pylsp:$FULL_TAG"
   echo "👉 Building $image from pylsp/Dockerfile"
   docker buildx build \
     --platform "$PLATFORM" \
@@ -150,7 +150,7 @@ fi
 
 # Build y-websocket-server service (directory: y-websocket-server, image: y-websocket-server)
 if should_build "y-websocket-server"; then
-  image="texera/y-websocket-server:$FULL_TAG"
+  image="kunwp1/y-websocket-server:$FULL_TAG"
   echo "👉 Building $image from y-websocket-server/Dockerfile"
   docker buildx build \
     --platform "$PLATFORM" \

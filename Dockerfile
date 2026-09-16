@@ -40,7 +40,7 @@ COPY core/ .
 
 RUN chmod 1777 /tmp
 RUN apt-get update
-RUN apt-get install -y netcat unzip python3-pip gfortran libreadline-dev libx11-dev libxt-dev libxext-dev libxmu-dev libxrender-dev libbz2-dev liblzma-dev libpcre2-dev libcurl4-openssl-dev libpng-dev libxml2-dev libcairo2-dev libfontconfig1-dev libfreetype6-dev libharfbuzz-dev libfribidi-dev libtiff5-dev libssl-dev libpq-dev && apt-get clean && rm -rf /var/lib/apt/lists/* 
+RUN apt-get install -y netcat unzip python3-pip gfortran libreadline-dev libx11-dev libxt-dev libxext-dev libxmu-dev libxrender-dev libbz2-dev liblzma-dev libpcre2-dev libcurl4-openssl-dev libpng-dev libxml2-dev libcairo2-dev libfontconfig1-dev libfreetype6-dev libharfbuzz-dev libfribidi-dev libtiff5-dev libssl-dev libpq-dev && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     wget software-properties-common && \

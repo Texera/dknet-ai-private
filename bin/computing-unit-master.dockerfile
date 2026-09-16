@@ -225,6 +225,52 @@ RUN if [ "$WITH_R_SUPPORT" = "true" ]; then \
                       Ncpus = parallel::detectCores())" ; \
     fi
 
+# === dkNET expression + APA pipeline tools (installed system-wide; no conda env) ===
+
+# DESeq2 (+ openxlsx) into the source-built R 4.3.3 so the differential-expression
+# step can run as a native R UDF. Bioconductor 3.18 matches R 4.3; BiocManager was
+# installed in the R block above. update=FALSE preserves the pinned Seurat stack.
+RUN if [ "$WITH_R_SUPPORT" = "true" ]; then \
+        Rscript -e "options(repos = c(CRAN = 'https://cran.r-project.org')); \
+                    BiocManager::install('DESeq2', update = FALSE, ask = FALSE, \
+                      Ncpus = parallel::detectCores()); \
+                    install.packages('openxlsx', Ncpus = parallel::detectCores())" ; \
+    fi
+
+# CLI tools the pipelines call: samtools (depth/index), bedtools (genomecov->Wig),
+# sra-toolkit (fasterq-dump/prefetch), FastQC (pulls a JRE dep; the temurin JDK
+# stays default via PATH/JAVA_HOME), cutadapt + perl (Trim Galore deps), git
+# (DaPars2 clone), wget. Late layer so the R/conda/pip layers above stay cached.
+RUN apt-get update && apt-get install -y \
+        samtools \
+        bedtools \
+        sra-toolkit \
+        fastqc \
+        cutadapt \
+        perl \
+        parallel \
+        git \
+        wget \
+    && apt-get clean
+
+# STAR and Trim Galore have no apt package -> pinned release binaries on PATH
+# (x86_64 image; STAR ships a Linux_x86_64_static build).
+RUN curl -fsSL https://github.com/alexdobin/STAR/archive/refs/tags/2.7.10a.tar.gz -o /tmp/star.tar.gz && \
+    tar -xzf /tmp/star.tar.gz -C /tmp && \
+    cp /tmp/STAR-2.7.10a/bin/Linux_x86_64_static/STAR /usr/local/bin/STAR && \
+    curl -fsSL https://github.com/FelixKrueger/TrimGalore/archive/refs/tags/0.6.10.tar.gz -o /tmp/trimgalore.tar.gz && \
+    tar -xzf /tmp/trimgalore.tar.gz -C /tmp && \
+    cp /tmp/TrimGalore-0.6.10/trim_galore /usr/local/bin/trim_galore && \
+    chmod +x /usr/local/bin/STAR /usr/local/bin/trim_galore && \
+    rm -rf /tmp/star.tar.gz /tmp/STAR-2.7.10a /tmp/trimgalore.tar.gz /tmp/TrimGalore-0.6.10 && \
+    STAR --version && trim_galore --version
+
+# DaPars2 (APA) — pure-Python scripts run under the system Python, which already has
+# numpy (2.1.0) and scipy (pulled in by scanpy); verified to run on numpy 2.1.0.
+# Pinned to a tested commit for reproducibility.
+RUN git clone https://github.com/3UTR/DaPars2.git /opt/DaPars2 && \
+    git -C /opt/DaPars2 checkout fb81c6cce1a1bbd8093cba327040f16e4ccc7cb6
+
 ENV LD_LIBRARY_PATH=/usr/local/lib/R/lib:$LD_LIBRARY_PATH
 
 # Copy the built texera binary from the build phase

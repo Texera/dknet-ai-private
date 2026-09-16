@@ -33,7 +33,7 @@ import {
 } from "ng-zorro-antd/table";
 import { NzModalService } from "ng-zorro-antd/modal";
 import { NzMessageService } from "ng-zorro-antd/message";
-import { AdminUserService } from "../../../service/admin/user/admin-user.service";
+import { AdminUserService, PermissionTemplate } from "../../../service/admin/user/admin-user.service";
 import { MilliSecond, Role, User } from "../../../../common/type/user";
 import { UserService } from "../../../../common/service/user/user.service";
 import { UserQuotaComponent } from "../../user/user-quota/user-quota.component";
@@ -52,6 +52,7 @@ import { NgFor, NgClass, NgIf, DatePipe } from "@angular/common";
 import { UserAvatarComponent } from "../../user/user-avatar/user-avatar.component";
 import { NzSelectComponent, NzOptionComponent } from "ng-zorro-antd/select";
 import { NzTooltipDirective } from "ng-zorro-antd/tooltip";
+import { PermissionEditModalComponent } from "./permission-edit-modal/permission-edit-modal.component";
 
 @UntilDestroy()
 @Component({
@@ -83,6 +84,7 @@ import { NzTooltipDirective } from "ng-zorro-antd/tooltip";
     NzOptionComponent,
     NzTooltipDirective,
     DatePipe,
+    PermissionEditModalComponent,
   ],
 })
 export class AdminUserComponent implements OnInit {
@@ -93,6 +95,7 @@ export class AdminUserComponent implements OnInit {
   editEmail: string = "";
   editRole: Role = Role.REGULAR;
   editComment: string = "";
+  editPermission: string = "{}";
   nameSearchValue: string = "";
   emailSearchValue: string = "";
   commentSearchValue: string = "";
@@ -101,6 +104,9 @@ export class AdminUserComponent implements OnInit {
   commentSearchVisible = false;
   listOfDisplayUser = [...this.userList];
   currentUid: number | undefined = 0;
+  permissionTemplate: PermissionTemplate | null = null;
+  isPermissionModalVisible: boolean = false;
+  selectedUserForPermission: User | null = null;
 
   @ViewChild("nameInput") nameInputRef?: ElementRef<HTMLInputElement>;
   @ViewChild("emailInput") emailInputRef?: ElementRef<HTMLInputElement>;
@@ -124,6 +130,13 @@ export class AdminUserComponent implements OnInit {
         this.userList = userList;
         this.reset();
       });
+
+    this.adminUserService
+      .getPermissionTemplate()
+      .pipe(untilDestroyed(this))
+      .subscribe(template => {
+        this.permissionTemplate = template;
+      });
   }
 
   public updateRole(user: User, role: Role): void {
@@ -146,6 +159,7 @@ export class AdminUserComponent implements OnInit {
     this.editEmail = user.email;
     this.editRole = user.role;
     this.editComment = user.comment;
+    this.editPermission = user.permission || "{}";
 
     setTimeout(() => {
       if (attribute === "name" && this.nameInputRef) {
@@ -171,7 +185,8 @@ export class AdminUserComponent implements OnInit {
       (originalUser.name === this.editName &&
         originalUser.email === this.editEmail &&
         originalUser.comment === this.editComment &&
-        originalUser.role === this.editRole)
+        originalUser.role === this.editRole &&
+        (originalUser.permission || "{}") === this.editPermission)
     ) {
       this.stopEdit();
       return;
@@ -190,7 +205,7 @@ export class AdminUserComponent implements OnInit {
     this.stopEdit();
 
     this.adminUserService
-      .updateUser(currentUid, this.editName, this.editEmail, this.editRole, this.editComment)
+      .updateUser(currentUid, this.editName, this.editEmail, this.editRole, this.editComment, this.editPermission)
       .pipe(untilDestroyed(this))
       .subscribe({
         next: () => {
@@ -273,6 +288,25 @@ export class AdminUserComponent implements OnInit {
       nzBodyStyle: { padding: "0" },
       nzCentered: true,
     });
+  }
+
+  openPermissionModal(user: User): void {
+    this.selectedUserForPermission = user;
+    this.startEdit(user, "permission");
+    this.isPermissionModalVisible = true;
+  }
+
+  handlePermissionSave(editedPermission: string): void {
+    this.editPermission = editedPermission;
+    this.saveEdit();
+    this.isPermissionModalVisible = false;
+    this.selectedUserForPermission = null;
+  }
+
+  handlePermissionCancel(): void {
+    this.stopEdit();
+    this.isPermissionModalVisible = false;
+    this.selectedUserForPermission = null;
   }
 
   isUserActive(user: User): boolean {

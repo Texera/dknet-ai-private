@@ -28,6 +28,8 @@ import org.apache.texera.dao.SqlServer
 import org.apache.texera.dao.jooq.generated.Tables.OPERATOR_PORT_EXECUTIONS
 import org.apache.texera.web.dao.{OperatorPortCacheDao, OperatorPortCacheRecord}
 import org.apache.texera.amber.core.storage.DocumentFactory
+import org.apache.texera.amber.core.tuple.AttributeType
+import com.typesafe.scalalogging.LazyLogging
 
 import java.net.URI
 import scala.jdk.CollectionConverters._
@@ -46,7 +48,7 @@ import scala.util.Try
   *
   * @param dao OperatorPortCacheDao for database access
   */
-class OperatorPortCacheService(dao: OperatorPortCacheDao) {
+class OperatorPortCacheService(dao: OperatorPortCacheDao) extends LazyLogging {
   private val context = SqlServer.getInstance().createDSLContext()
 
   /**
@@ -59,6 +61,27 @@ class OperatorPortCacheService(dao: OperatorPortCacheDao) {
       deletedRows: Int,
       deletedResultUris: Set[URI]
   )
+
+  /**
+    * True if the given output port's schema declares a LARGE_BINARY attribute.
+    *
+    * A LARGE_BINARY value is an S3 reference scoped to the producing execution
+    * (objects/{executionId}/...); the cache stores only that reference, not the
+    * bytes. Caching such a port would let the reference outlive the execution that
+    * owns the bytes (via cross-execution reuse), producing dangling references once
+    * the producing execution's resources are cleaned up. These ports are excluded
+    * from caching entirely and their outputs are recomputed instead.
+    */
+  private def outputHasLargeBinary(
+      physicalPlan: PhysicalPlan,
+      portId: GlobalPortIdentity
+  ): Boolean =
+    physicalPlan
+      .getOperator(portId.opId)
+      .outputPorts
+      .get(portId.portId)
+      .flatMap { case (_, _, schemaEither) => schemaEither.toOption }
+      .exists(_.getAttributes.exists(_.getType == AttributeType.LARGE_BINARY))
 
   /**
     * Lookup cached outputs for all materializable ports in the physical plan.
@@ -79,6 +102,7 @@ class OperatorPortCacheService(dao: OperatorPortCacheDao) {
   ): Map[GlobalPortIdentity, CachedOutput] = {
     physicalPlan.operators
       .flatMap(op => op.outputPorts.keys.map(pid => GlobalPortIdentity(op.id, pid)))
+      .filterNot(gpid => outputHasLargeBinary(physicalPlan, gpid))
       .flatMap { gpid =>
         val fingerprint = FingerprintUtil.computeSubdagFingerprint(physicalPlan, gpid)
         dao.get(workflowId.id, gpid.serializeAsString, fingerprint.subdagHash).map { record =>
@@ -116,6 +140,14 @@ class OperatorPortCacheService(dao: OperatorPortCacheDao) {
       resultUri: URI,
       tupleCount: Option[Long]
   ): Unit = {
+    if (outputHasLargeBinary(physicalPlan, portId)) {
+      logger.info(
+        s"Skipping result cache for port $portId: output schema contains a LARGE_BINARY " +
+          "attribute, whose bytes are execution-scoped and not safely cacheable."
+      )
+      return
+    }
+
     val fingerprint = FingerprintUtil.computeSubdagFingerprint(physicalPlan, portId)
 
     dao.upsert(

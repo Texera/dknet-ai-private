@@ -84,9 +84,10 @@ export class WorkflowComputingUnitManagingService {
     jvmMemorySize: string,
     shmSize: string,
     uri: string,
-    unitType: "kubernetes" | "local"
+    unitType: "kubernetes" | "local",
+    gpuModel?: string
   ): Observable<DashboardWorkflowComputingUnit> {
-    const body = { name, cpuLimit, memoryLimit, gpuLimit, jvmMemorySize, shmSize, uri, unitType };
+    const body = { name, cpuLimit, memoryLimit, gpuLimit, jvmMemorySize, shmSize, uri, unitType, gpuModel };
 
     return this.http
       .post<DashboardWorkflowComputingUnit>(`${AppSettings.getApiEndpoint()}/${COMPUTING_UNIT_CREATE_URL}`, body)
@@ -102,6 +103,8 @@ export class WorkflowComputingUnitManagingService {
    * @param gpuLimit The gpu resource limit for the computing unit.
    * @param jvmMemorySize The JVM memory size (e.g. "1G", "2G")
    * @param shmSize The shared memory size
+   * @param gpuModel Optional GPU model to pin the pod to a specific node label (e.g. "H200", "A40").
+   *                 Pass "Any" or omit to let the scheduler decide.
    * @returns An Observable of the created WorkflowComputingUnit.
    */
   public createKubernetesBasedComputingUnit(
@@ -110,9 +113,37 @@ export class WorkflowComputingUnitManagingService {
     memoryLimit: string,
     gpuLimit: string,
     jvmMemorySize: string,
-    shmSize: string
+    shmSize: string,
+    gpuModel?: string
   ): Observable<DashboardWorkflowComputingUnit> {
-    return this.createComputingUnit(name, cpuLimit, memoryLimit, gpuLimit, jvmMemorySize, shmSize, "", "kubernetes");
+    return this.createComputingUnit(
+      name,
+      cpuLimit,
+      memoryLimit,
+      gpuLimit,
+      jvmMemorySize,
+      shmSize,
+      "",
+      "kubernetes",
+      gpuModel
+    );
+  }
+
+  /**
+   * Fetch GPU model options that currently have enough free capacity for the requested count.
+   *
+   * The list is computed from live K8s node state on every call, so it reflects
+   * which GPU models are actually available right now.  "Any" is always the first
+   * entry and means free scheduling (no node selector applied).
+   *
+   * @param gpuCount number of GPUs the user intends to request
+   * @returns Observable of available GPU model strings, e.g. ["Any", "H200", "A40"]
+   */
+  public getAvailableGpuModels(gpuCount: number): Observable<string[]> {
+    return this.http.get<string[]>(
+      `${AppSettings.getApiEndpoint()}/${COMPUTING_UNIT_BASE_URL}/available-gpu-models`,
+      { params: { gpuCount: gpuCount.toString() } }
+    );
   }
 
   /**

@@ -22,6 +22,9 @@
 
 SET search_path TO texera_db;
 
+-- ============================================
+-- 2. Update the table schema
+-- ============================================
 BEGIN;
 
 ALTER TABLE "user"
@@ -44,5 +47,8 @@ CREATE TABLE IF NOT EXISTS operator_port_cache
     PRIMARY KEY (workflow_id, global_port_id, subdag_hash),
     FOREIGN KEY (workflow_id) REFERENCES workflow(wid) ON DELETE CASCADE
 );
+
+ALTER TABLE "user"
+    ADD COLUMN IF NOT EXISTS joining_reason VARCHAR(500);
 
 COMMIT;
