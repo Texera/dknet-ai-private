@@ -37,6 +37,7 @@
 
 from pytexera import *
 
+import base64
 import json
 import os
 import re
@@ -150,21 +151,35 @@ class ProcessTupleOperator(UDFOperatorV2):
 
     @staticmethod
     def _viewer(tuple_: Tuple, cif: str, summary: dict, mean_plddt: float) -> str:
-        # json.dumps yields a correctly escaped JS string literal, so nothing in the
-        # mmCIF can break out of the script. AlphaFold writes per-atom pLDDT into the
-        # B-factor column, so colouring by B-factor is colouring by confidence.
-        cif_literal = json.dumps(cif)
+        # The outer div comes first on purpose: Texera's visualization frame stretches
+        # the page's first div to full height, so that div has to be the one holding
+        # both the title and the canvas. Were the title bar first, it would fill the
+        # frame and push the structure out of view.
+        #
+        # The inline script must not contain <, > or &. The frame re-serializes the page
+        # with XMLSerializer, which escapes them to entities, and the iframe then reads
+        # the script as raw text -- so `b > 90` arrives as `b &gt; 90`, render() throws,
+        # and the canvas stays black. Hence the mmCIF travels as base64 (which also
+        # keeps it from breaking out of the script), and the confidence band is chosen
+        # arithmetically rather than with comparisons.
+        #
+        # AlphaFold writes per-atom pLDDT into the B-factor column, so colouring by
+        # B-factor is colouring by confidence.
+        cif_b64 = base64.b64encode(cif.encode()).decode()
         return f"""<!doctype html>
 <html><head><meta charset="utf-8">
 <script src="https://cdn.jsdelivr.net/npm/3dmol@2.4.0/build/3Dmol-min.js"></script>
 <style>
+  html, body {{ height:100%; }}
   body {{ margin:0; font-family:system-ui,-apple-system,sans-serif; background:#0f1115; color:#e8eaed; }}
-  .bar {{ padding:10px 14px; border-bottom:1px solid #262a33; }}
+  .page {{ display:flex; flex-direction:column; height:100%; }}
+  .bar {{ flex:none; padding:10px 14px; border-bottom:1px solid #262a33; }}
   .name {{ font-size:15px; font-weight:600; }}
   .meta {{ font-size:12px; color:#9aa3b2; margin-top:3px; line-height:1.5; }}
-  #v {{ position:relative; width:100%; height:440px; }}
+  #v {{ position:relative; flex:1; min-height:360px; width:100%; }}
 </style></head>
 <body>
+<div class="page">
   <div class="bar">
     <div class="name">{tuple_["protein"]} &middot; {tuple_["accession"]}</div>
     <div class="meta">
@@ -174,12 +189,14 @@ class ProcessTupleOperator(UDFOperatorV2):
     </div>
   </div>
   <div id="v"></div>
+</div>
 <script>
   var viewer = $3Dmol.createViewer(document.getElementById("v"), {{backgroundColor:"#0f1115"}});
-  viewer.addModel({cif_literal}, "cif");
+  viewer.addModel(atob("{cif_b64}"), "cif");
+  // Bands: under 50, 50-70, 70-90, over 90. ceil((b - 50) / 20), clamped to 0..3.
+  var bands = ["#ff7d45", "#ffdb13", "#65cbf3", "#0053d6"];
   viewer.setStyle({{}}, {{cartoon:{{colorfunc: function(atom) {{
-    var b = atom.b;
-    return b > 90 ? "#0053d6" : b > 70 ? "#65cbf3" : b > 50 ? "#ffdb13" : "#ff7d45";
+    return bands[Math.min(3, Math.max(0, Math.ceil((atom.b - 50) / 20)))];
   }}}}}});
   viewer.zoomTo();
   viewer.render();
