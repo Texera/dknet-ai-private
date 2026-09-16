@@ -26,7 +26,9 @@ import { DatasetService } from "../../../service/user/dataset/dataset.service";
 import { SortMethod } from "../../../type/sort-method";
 import { DashboardEntry } from "../../../type/dashboard-entry";
 import { SearchResultsComponent } from "../search-results/search-results.component";
+import { CardItemComponent } from "../list-item/card-item/card-item.component";
 import { FiltersComponent } from "../filters/filters.component";
+import { SortButtonComponent } from "../sort-button/sort-button.component";
 import { firstValueFrom } from "rxjs";
 import { USER_DATASET } from "../../../../app-routing.constant";
 import { NzModalService } from "ng-zorro-antd/modal";
@@ -35,7 +37,7 @@ import { DashboardDataset } from "../../../type/dashboard-dataset.interface";
 import { NzMessageService } from "ng-zorro-antd/message";
 import { map, tap } from "rxjs/operators";
 import { NzCardComponent } from "ng-zorro-antd/card";
-import { NzSpaceCompactItemDirective } from "ng-zorro-antd/space";
+import { NzSpaceCompactItemDirective, NzSpaceCompactComponent } from "ng-zorro-antd/space";
 import { NzButtonComponent } from "ng-zorro-antd/button";
 import { NzWaveDirective } from "ng-zorro-antd/core/wave";
 import { ɵNzTransitionPatchDirective } from "ng-zorro-antd/core/transition-patch";
@@ -43,6 +45,7 @@ import { NzIconDirective } from "ng-zorro-antd/icon";
 import { FiltersInstructionsComponent } from "../filters-instructions/filters-instructions.component";
 import { NzSelectComponent } from "ng-zorro-antd/select";
 import { FormsModule } from "@angular/forms";
+import { EntityType } from "../../../../hub/service/hub.service";
 
 @UntilDestroy()
 @Component({
@@ -52,23 +55,32 @@ import { FormsModule } from "@angular/forms";
   imports: [
     NzCardComponent,
     NzSpaceCompactItemDirective,
+    NzSpaceCompactComponent,
     NzButtonComponent,
     NzWaveDirective,
     ɵNzTransitionPatchDirective,
     NzIconDirective,
     FiltersComponent,
+    SortButtonComponent,
     FiltersInstructionsComponent,
     NzSelectComponent,
     FormsModule,
     SearchResultsComponent,
+    CardItemComponent,
   ],
 })
 export class UserDatasetComponent implements AfterViewInit {
-  public sortMethod = SortMethod.EditTimeDesc;
+  public readonly entityType = EntityType.Dataset;
+  private static readonly VIEW_MODE_STORAGE_KEY = "texera.userDataset.viewMode";
+  // Datasets have no "last modified" timestamp, so EditTimeDesc leaves the sort key NULL for every
+  // row and produces an undefined order. Default to CreateTimeDesc so newly created datasets appear first.
+  public sortMethod = SortMethod.CreateTimeDesc;
   lastSortMethod: SortMethod | null = null;
   public isLogin = this.userService.isLogin();
   public currentUid = this.userService.getCurrentUser()?.uid;
   public hasMismatch = false; // Display warning when there are mismatched datasets
+  public viewType: "list" | "card" =
+    localStorage.getItem(UserDatasetComponent.VIEW_MODE_STORAGE_KEY) === "list" ? "list" : "card";
 
   private _searchResultsComponent?: SearchResultsComponent;
   @ViewChild(SearchResultsComponent) get searchResultsComponent(): SearchResultsComponent {
@@ -118,6 +130,14 @@ export class UserDatasetComponent implements AfterViewInit {
       .userChanged()
       .pipe(untilDestroyed(this))
       .subscribe(() => this.search());
+  }
+
+  public setViewType(viewType: "list" | "card"): void {
+    if (this.viewType === viewType) {
+      return;
+    }
+    this.viewType = viewType;
+    localStorage.setItem(UserDatasetComponent.VIEW_MODE_STORAGE_KEY, viewType);
   }
 
   /*

@@ -38,7 +38,6 @@ import { NzIconDirective } from "ng-zorro-antd/icon";
 import { NzTooltipDirective } from "ng-zorro-antd/tooltip";
 import { NzSpaceCompactItemDirective } from "ng-zorro-antd/space";
 import { NzButtonComponent } from "ng-zorro-antd/button";
-import { FormlyRepeatDndComponent } from "../../../common/formly/repeat-dnd/repeat-dnd.component";
 
 @UntilDestroy()
 @Component({
@@ -63,7 +62,6 @@ import { FormlyRepeatDndComponent } from "../../../common/formly/repeat-dnd/repe
     CdkDragHandle,
     NgComponentOutlet,
     NzResizeHandlesComponent,
-    FormlyRepeatDndComponent,
   ],
 })
 export class LeftPanelComponent implements OnDestroy, OnInit, AfterViewInit {

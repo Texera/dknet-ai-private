@@ -31,7 +31,7 @@ import org.apache.texera.amber.engine.architecture.sendsemantics.partitionings.{
 }
 import org.apache.texera.amber.engine.e2e.TestUtils.buildWorkflow
 import org.apache.texera.amber.operator.TestOperators
-import org.apache.texera.workflow.LogicalLink
+import org.apache.texera.common.compiler.model.LogicalLink
 import org.scalatest.flatspec.AnyFlatSpec
 
 class ResourcePoliciesSpec extends AnyFlatSpec {
@@ -105,7 +105,7 @@ class ResourcePoliciesSpec extends AnyFlatSpec {
         if (!op.parallelizable) 1
         else
           op.suggestedWorkerNum.getOrElse(
-            org.apache.texera.amber.config.ApplicationConfig.numWorkerPerOperatorByDefault
+            org.apache.texera.common.config.ApplicationConfig.numWorkerPerOperatorByDefault
           )
       assert(workers == expected, s"unexpected worker count for ${op.id}")
     }

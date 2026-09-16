@@ -51,6 +51,9 @@ import { THROTTLE_TIME_MS } from "../../hub/component/workflow/detail/hub-workfl
 import { WorkflowCompilingService } from "../service/compile-workflow/workflow-compiling.service";
 import { USER_WORKSPACE } from "../../app-routing.constant";
 import { GuiConfigService } from "../../common/service/gui-config.service";
+import { ComputingUnitStatusService } from "../../common/service/computing-unit/computing-unit-status/computing-unit-status.service";
+import { ExecuteWorkflowService } from "../service/execute-workflow/execute-workflow.service";
+import { WorkflowResultService } from "../service/workflow-result/workflow-result.service";
 import { checkIfWorkflowBroken } from "../../common/util/workflow-check";
 import { NzSpinComponent } from "ng-zorro-antd/spin";
 import { ResultPanelComponent } from "./result-panel/result-panel.component";
@@ -60,7 +63,7 @@ import { MiniMapComponent } from "./workflow-editor/mini-map/mini-map.component"
 import { LeftPanelComponent } from "./left-panel/left-panel.component";
 import { AgentPanelComponent } from "./agent/agent-panel/agent-panel.component";
 import { PropertyEditorComponent } from "./property-editor/property-editor.component";
-import { FormlyRepeatDndComponent } from "../../common/formly/repeat-dnd/repeat-dnd.component";
+import { JupyterNotebookPanelComponent } from "./jupyter-notebook-panel/jupyter-notebook-panel.component";
 
 export const SAVE_DEBOUNCE_TIME_IN_MS = 5000;
 
@@ -83,11 +86,10 @@ export const SAVE_DEBOUNCE_TIME_IN_MS = 5000;
     NgIf,
     AgentPanelComponent,
     PropertyEditorComponent,
-    FormlyRepeatDndComponent,
+    JupyterNotebookPanelComponent,
   ],
 })
 export class WorkspaceComponent implements AfterViewInit, OnInit, OnDestroy {
-  public pid?: number = undefined;
   public writeAccess: boolean = false;
   public isLoading: boolean = false;
   @ViewChild("codeEditor", { read: ViewContainerRef }) codeEditorViewRef!: ViewContainerRef;
@@ -126,24 +128,20 @@ export class WorkspaceComponent implements AfterViewInit, OnInit, OnDestroy {
     private hubService: HubService,
     private codeEditorService: CodeEditorService,
     private config: GuiConfigService,
-    private changeDetectorRef: ChangeDetectorRef
+    private changeDetectorRef: ChangeDetectorRef,
+    private computingUnitStatusService: ComputingUnitStatusService,
+    private executeWorkflowService: ExecuteWorkflowService,
+    private workflowResultService: WorkflowResultService
   ) {}
 
   ngOnInit() {
-    /**
-     * On initialization of the workspace, there are two possibilities regarding which component has
-     * routed to this component:
-     *
-     * 1. Routed to this component from within UserProjectSection component
-     *    - track the pid identifying that project
-     *    - upon persisting of a workflow, must also ensure it is also added to the project
-     *
-     * 2. Routed to this component from SavedWorkflowSection component
-     *    - there is no related project, parseInt will return NaN.
-     *    - NaN || undefined will result in undefined.
-     */
-    this.pid = parseInt(this.route.snapshot.queryParams.pid) || undefined;
     this.workflowActionService.setHighlightingEnabled(true);
+    // Clear session state when the user switches computing units in-canvas, so
+    // the previous unit's status/console/results don't linger.
+    this.computingUnitStatusService
+      .getConnectionResetStream()
+      .pipe(untilDestroyed(this))
+      .subscribe(() => this.resetWorkflowSessionState());
   }
 
   ngAfterViewInit(): void {
@@ -184,6 +182,20 @@ export class WorkspaceComponent implements AfterViewInit, OnInit, OnDestroy {
 
     this.codeEditorViewRef.clear();
     this.workflowActionService.clearWorkflow();
+    // Tear down the connection and all websocket-derived session state so a
+    // re-entered workflow starts clean instead of reusing the previous one.
+    this.computingUnitStatusService.disconnect();
+    this.resetWorkflowSessionState();
+  }
+
+  /**
+   * Clear websocket-derived session state (execution status, console, results).
+   * Shared by workspace teardown and in-canvas unit switches.
+   */
+  private resetWorkflowSessionState(): void {
+    this.executeWorkflowService.resetExecutionAndWorkers();
+    this.workflowConsoleService.clearConsoleMessages();
+    this.workflowResultService.clearResults();
   }
 
   registerAutoPersistWorkflow(): void {
@@ -235,9 +247,17 @@ export class WorkspaceComponent implements AfterViewInit, OnInit, OnDestroy {
           this.workflowActionService.setNewSharedModel(wid, this.userService.getCurrentUser());
           // remember URL fragment
           const fragment = this.route.snapshot.fragment;
-          // load the fetched workflow
-          this.workflowActionService.reloadWorkflow(workflow);
+          // An AI-generated workflow arrives with autolayout=1. Render synchronously
+          // (asyncRendering = false) so the operators exist before the one-shot layout runs.
+          const shouldAutoLayout = this.route.snapshot.queryParams.autolayout === "1";
+          this.workflowActionService.reloadWorkflow(workflow, shouldAutoLayout ? false : undefined);
           this.workflowActionService.enableWorkflowModification();
+          // Register before autoLayoutWorkflow(): workflowChanged() streams are hot, so subscribing
+          // afterward would drop the layout's position events and the tidied layout would never save.
+          this.registerAutoPersistWorkflow();
+          if (shouldAutoLayout) {
+            this.workflowActionService.autoLayoutWorkflow();
+          }
           // set the URL fragment to previous value
           // because reloadWorkflow will highlight/unhighlight all elements
           // which will change the URL fragment
@@ -260,7 +280,6 @@ export class WorkspaceComponent implements AfterViewInit, OnInit, OnDestroy {
           this.undoRedoService.clearUndoStack();
           this.undoRedoService.clearRedoStack();
           this.setLoadingState(false);
-          this.registerAutoPersistWorkflow();
           this.triggerCenter();
         },
         () => {
@@ -296,6 +315,7 @@ export class WorkspaceComponent implements AfterViewInit, OnInit, OnDestroy {
         this.registerAutoPersistWorkflow();
       });
   }
+
   onWIDChange() {
     this.workflowActionService
       .workflowMetaDataChanged()
@@ -309,6 +329,7 @@ export class WorkspaceComponent implements AfterViewInit, OnInit, OnDestroy {
         this.writeAccess = !metadata.readonly;
       });
   }
+
   updateViewCount() {
     let wid = this.route.snapshot.params.id;
     let uid = this.userService.getCurrentUser()?.uid;
@@ -318,6 +339,7 @@ export class WorkspaceComponent implements AfterViewInit, OnInit, OnDestroy {
       .pipe(untilDestroyed(this))
       .subscribe();
   }
+
   public triggerCenter(): void {
     this.workflowActionService.getTexeraGraph().triggerCenterEvent();
   }

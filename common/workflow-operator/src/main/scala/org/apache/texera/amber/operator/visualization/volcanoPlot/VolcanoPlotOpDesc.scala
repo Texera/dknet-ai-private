@@ -20,7 +20,7 @@
 package org.apache.texera.amber.operator.visualization.volcanoPlot
 
 import com.fasterxml.jackson.annotation.{JsonProperty, JsonPropertyDescription}
-import com.kjetland.jackson.jsonSchema.annotations.JsonSchemaTitle
+import com.kjetland.jackson.jsonSchema.annotations.{JsonSchemaInject, JsonSchemaTitle}
 import org.apache.texera.amber.core.tuple.{AttributeType, Schema}
 import org.apache.texera.amber.pybuilder.PythonTemplateBuilder.PythonTemplateBuilderStringContext
 import org.apache.texera.amber.pybuilder.PyStringTypes.EncodableString
@@ -29,6 +29,18 @@ import org.apache.texera.amber.operator.PythonOperatorDescriptor
 import org.apache.texera.amber.operator.metadata.annotations.AutofillAttributeName
 import org.apache.texera.amber.operator.metadata.{OperatorGroupConstants, OperatorInfo}
 
+import javax.validation.constraints.NotNull
+
+// type constraint: the p-value is filtered with `> 0` and passed to np.log10, and the
+// effect column is the quantitative x axis, so both can only be numeric.
+@JsonSchemaInject(json = """
+{
+  "attributeTypeRules": {
+    "effectColumn": { "enum": ["integer", "long", "double"] },
+    "pvalueColumn": { "enum": ["integer", "long", "double"] }
+  }
+}
+""")
 class VolcanoPlotOpDesc extends PythonOperatorDescriptor {
 
   @JsonProperty(required = true)
@@ -38,7 +50,9 @@ class VolcanoPlotOpDesc extends PythonOperatorDescriptor {
       "of change between two experimental groups. This value is typically a log2 fold change " +
       "and is used for the x-axis of the volcano plot."
   )
-  @AutofillAttributeName var effectColumn: EncodableString = ""
+  @AutofillAttributeName
+  @NotNull(message = "Effect Size (log2 Fold Change) cannot be empty")
+  var effectColumn: EncodableString = ""
 
   @JsonProperty(required = true)
   @JsonSchemaTitle("P-Value Column")
@@ -47,7 +61,9 @@ class VolcanoPlotOpDesc extends PythonOperatorDescriptor {
       "statistical test for each feature. This value is transformed using -log10(p-value) and " +
       "plotted on the y-axis to indicate statistical significance."
   )
-  @AutofillAttributeName var pvalueColumn: EncodableString = ""
+  @AutofillAttributeName
+  @NotNull(message = "P-Value Column cannot be empty")
+  var pvalueColumn: EncodableString = ""
 
   override def operatorInfo: OperatorInfo =
     OperatorInfo.forVisualization(

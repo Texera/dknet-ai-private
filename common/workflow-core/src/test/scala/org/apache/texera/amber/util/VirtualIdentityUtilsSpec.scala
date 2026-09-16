@@ -62,8 +62,8 @@ class VirtualIdentityUtilsSpec extends AnyFlatSpec with Matchers {
   }
 
   it should "fall back to __DummyOperator/__DummyLayer for non-worker actor names" in {
-    val controller = ActorVirtualIdentity("CONTROLLER")
-    val opId = VirtualIdentityUtils.getPhysicalOpId(controller)
+    val coordinator = ActorVirtualIdentity("COORDINATOR")
+    val opId = VirtualIdentityUtils.getPhysicalOpId(coordinator)
     opId.logicalOpId.id shouldBe "__DummyOperator"
     opId.layerName shouldBe "__DummyLayer"
   }
@@ -94,6 +94,34 @@ class VirtualIdentityUtilsSpec extends AnyFlatSpec with Matchers {
     }
   }
 
+  // ----- getLogicalOpId -----
+
+  "getLogicalOpId" should "return the logical operator id from a worker actor name" in {
+    val actor = ActorVirtualIdentity("Worker:WF7-myOp-main-3")
+    VirtualIdentityUtils.getLogicalOpId(actor) shouldBe "myOp"
+  }
+
+  it should "match getPhysicalOpId(...).logicalOpId.id for worker actor names" in {
+    // Pin the helper as a thin wrapper — `getLogicalOpId(workerId)` and
+    // `getPhysicalOpId(workerId).logicalOpId.id` must always agree, so
+    // call sites that migrate to the helper are guaranteed to keep
+    // identical behavior.
+    val actor = ActorVirtualIdentity("Worker:WF1-multi-part-op-main-0")
+    VirtualIdentityUtils.getLogicalOpId(actor) shouldBe
+      VirtualIdentityUtils.getPhysicalOpId(actor).logicalOpId.id
+  }
+
+  it should "fall back to the __DummyOperator sentinel for non-worker actor names" in {
+    // The Python sibling raises ValueError on a non-match; the Scala
+    // helper preserves the existing __DummyOperator sentinel so it
+    // stays a drop-in replacement for the inline pattern at call sites
+    // (see VirtualIdentityUtils.getLogicalOpId docstring).
+    val coordinator = ActorVirtualIdentity("COORDINATOR")
+    VirtualIdentityUtils.getLogicalOpId(coordinator) shouldBe "__DummyOperator"
+    val self = ActorVirtualIdentity("SELF")
+    VirtualIdentityUtils.getLogicalOpId(self) shouldBe "__DummyOperator"
+  }
+
   // ----- getWorkerIndex -----
 
   "getWorkerIndex" should "return the trailing numeric workerId from a worker actor name" in {
@@ -102,14 +130,14 @@ class VirtualIdentityUtilsSpec extends AnyFlatSpec with Matchers {
   }
 
   it should "return None for non-worker actor names" in {
-    // Special ActorVirtualIdentity values like CONTROLLER or SELF do not
+    // Special ActorVirtualIdentity values like COORDINATOR or SELF do not
     // match workerNamePattern. getWorkerIndex returns None rather than
     // throwing scala.MatchError, mirroring the graceful handling in
     // getPhysicalOpId and toShorterString. Returning Option forces each
     // caller to explicitly acknowledge the non-worker case rather than
     // silently propagating a sentinel value.
-    val controller = ActorVirtualIdentity("CONTROLLER")
-    VirtualIdentityUtils.getWorkerIndex(controller) shouldBe None
+    val coordinator = ActorVirtualIdentity("COORDINATOR")
+    VirtualIdentityUtils.getWorkerIndex(coordinator) shouldBe None
     val self = ActorVirtualIdentity("SELF")
     VirtualIdentityUtils.getWorkerIndex(self) shouldBe None
   }
@@ -149,8 +177,8 @@ class VirtualIdentityUtilsSpec extends AnyFlatSpec with Matchers {
   }
 
   it should "return the actor name unchanged when it does not match the worker pattern" in {
-    val controller = ActorVirtualIdentity("CONTROLLER")
-    VirtualIdentityUtils.toShorterString(controller) shouldBe "CONTROLLER"
+    val coordinator = ActorVirtualIdentity("COORDINATOR")
+    VirtualIdentityUtils.toShorterString(coordinator) shouldBe "COORDINATOR"
   }
 
   // ----- getFromActorIdForInputPortStorage -----

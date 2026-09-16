@@ -21,6 +21,11 @@
                 "glob": "**/*",
                 "input": "./node_modules/@ant-design/icons-angular/src/inline-svg/",
                 "output": "/assets/"
+              },
+              {
+                "glob": "**/*",
+                "input": "./.well-known",
+                "output": "/.well-known/"
               }
             ],
             "styles": [
@@ -110,7 +115,6 @@
             "runnerConfig": "vitest.browser.config.ts",
             "tsConfig": "src/tsconfig.spec.json",
             "include": [
-              "**/app/workspace/component/workflow-editor/workflow-editor.component.spec.ts",
               "**/*.browser.spec.ts"
             ]
           }

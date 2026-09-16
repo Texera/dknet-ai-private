@@ -19,7 +19,7 @@
 
 package org.apache.texera.amber.engine.architecture.sendsemantics.partitioners
 
-import org.apache.texera.amber.config.ApplicationConfig
+import org.apache.texera.common.config.ApplicationConfig
 import org.apache.texera.amber.core.state.State
 import org.apache.texera.amber.core.tuple.{Attribute, AttributeType, Schema, Tuple}
 import org.apache.texera.amber.core.virtualidentity.ActorVirtualIdentity
@@ -175,6 +175,18 @@ class NetworkOutputBufferSpec extends AnyFlatSpec {
     buf.sendState(state)
     assert(cap.messages.size == 1)
     assert(cap.messages.head.payload == StateFrame(state))
+  }
+
+  it should "stamp the loop envelope onto the sent StateFrame" in {
+    // A JVM hop inside a loop body forwards the loop envelope unchanged
+    // (loop operators are Python-only); sendState must put the caller's
+    // loop_counter / loop_start_id on the frame instead of the no-loop
+    // defaults, or the matching LoopEnd's back-jump loses its target.
+    val (buf, cap) = newBuffer()
+    val state = State(Map("k" -> "v"))
+    buf.sendState(state, loopCounter = 2L, loopStartId = "outer-loop")
+    assert(cap.messages.size == 1)
+    assert(cap.messages.head.payload == StateFrame(state, 2L, "outer-loop"))
   }
 
   it should "leave the tuple buffer empty after sendState (trailing flush no-op)" in {

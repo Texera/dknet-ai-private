@@ -32,10 +32,15 @@ import org.apache.texera.amber.operator.metadata.annotations.{
 }
 import org.apache.texera.amber.operator.metadata.{OperatorGroupConstants, OperatorInfo}
 import org.apache.texera.amber.pybuilder.PythonTemplateBuilder
+
+import javax.validation.constraints.{NotEmpty, NotNull}
+// Type constraint: every axis of the matrix is plotted numerically. The key is the
+// PROPERTY name -- the `@JsonProperty` value, which is what the property editor looks
+// up -- and this operator's is "Selected Attributes"; keyed "value" it matched nothing.
 @JsonSchemaInject(json = """
 {
   "attributeTypeRules": {
-    "value": {
+    "Selected Attributes": {
       "enum": ["integer", "long", "double"]
     }
   }
@@ -47,12 +52,14 @@ class ScatterMatrixChartOpDesc extends PythonOperatorDescriptor {
   @JsonSchemaTitle("Selected Attributes")
   @JsonPropertyDescription("The axes of each scatter plot in the matrix.")
   @AutofillAttributeNameList
-  var selectedAttributes: List[EncodableString] = _
+  @NotEmpty(message = "Selected Attributes cannot be empty")
+  var selectedAttributes: List[EncodableString] = List()
 
   @JsonProperty(value = "Color", required = true)
   @JsonSchemaTitle("Color Column")
   @JsonPropertyDescription("Column to color points")
   @AutofillAttributeName
+  @NotNull(message = "Color Column cannot be empty")
   var color: EncodableString = ""
 
   override def getOutputSchemas(
@@ -71,7 +78,10 @@ class ScatterMatrixChartOpDesc extends PythonOperatorDescriptor {
     )
 
   def createPlotlyFigure(): PythonTemplateBuilder = {
-    assert(selectedAttributes.nonEmpty)
+    assert(
+      selectedAttributes != null && selectedAttributes.nonEmpty,
+      "Selected Attributes cannot be empty"
+    )
 
     val list_Attributes = selectedAttributes.map(attribute => pyb"""$attribute""").mkString(",")
     pyb"""

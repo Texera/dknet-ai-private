@@ -97,6 +97,7 @@
       </th>
       <th>Quota</th>
       <th>Permission</th>
+      <th>Feedbacks</th>
       <th
         [nzSortFn]="sortByAccountCreation"
         [nzSortDirections]="['ascend', 'descend']">
@@ -183,7 +184,7 @@
     <tr *ngFor="let user of basicTable.data">
       <td>
         <texera-user-avatar
-          [googleAvatar]="user.googleAvatar"
+          [avatar]="user.avatar"
           [userName]="user.name"
           class="user-avatar"
           [ngClass]="{ active: isUserActive(user) }">
@@ -197,6 +198,7 @@
               class="container"
               (click)="startEdit(user, 'name')">
               {{user.name}}
+              <nz-tag *ngIf="user.isPlaceholder">placeholder</nz-tag>
             </div>
           </ng-container>
           <ng-template #editNameTemplate>
@@ -313,6 +315,24 @@
             nz-icon
             nzTheme="outline"
             nzType="setting"></i>
+        </button>
+      </td>
+      <td>
+        <button
+          (click)="clickToViewFeedbacks(user.uid)"
+          [disabled]="getFeedbackCount(user.uid) === 0"
+          nz-button
+          [nz-tooltip]="getFeedbackCount(user.uid) === 0 ? 'no feedback submitted' : 'view feedback'"
+          type="button">
+          <nz-badge
+            [nzCount]="getFeedbackCount(user.uid)"
+            [nzOverflowCount]="99"
+            nzSize="small">
+            <i
+              nz-icon
+              nzTheme="outline"
+              nzType="message"></i>
+          </nz-badge>
         </button>
       </td>
       <td>

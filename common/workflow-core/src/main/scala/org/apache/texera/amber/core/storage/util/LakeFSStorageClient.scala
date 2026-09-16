@@ -19,13 +19,15 @@
 
 package org.apache.texera.amber.core.storage.util
 
+import com.typesafe.scalalogging.LazyLogging
 import io.lakefs.clients.sdk._
 import io.lakefs.clients.sdk.model.ResetCreation.TypeEnum
 import io.lakefs.clients.sdk.model._
-import org.apache.texera.amber.config.StorageConfig
+import org.apache.texera.common.config.StorageConfig
+import org.apache.texera.common.util.RetryUtil
 
 import java.io.{File, FileOutputStream, InputStream}
-import java.net.URI
+import java.net.{HttpURLConnection, URI, URL}
 import java.nio.file.Files
 import scala.jdk.CollectionConverters._
 
@@ -33,10 +35,15 @@ import scala.jdk.CollectionConverters._
   * LakeFSFileStorage provides high-level file storage operations using LakeFS,
   * similar to Git operations for version control and file management.
   */
-object LakeFSStorageClient {
+object LakeFSStorageClient extends LazyLogging {
 
   // Maximum number of results per LakeFS API request (pagination page size)
   private val PageSize = 1000
+
+  // Health-check retry settings: retry with exponential backoff before giving up.
+  // 5 attempts starting at 200ms (200, 400, 800, 1600ms) caps total wait at ~3s.
+  private val HealthCheckMaxAttempts = 5
+  private val HealthCheckInitialDelayMillis = 200L
 
   private lazy val apiClient: ApiClient = {
     val client = new ApiClient()
@@ -59,7 +66,6 @@ object LakeFSStorageClient {
   private lazy val branchesApi: BranchesApi = new BranchesApi(apiClient)
   private lazy val commitsApi: CommitsApi = new CommitsApi(apiClient)
   private lazy val refsApi: RefsApi = new RefsApi(apiClient)
-  private lazy val stagingApi: StagingApi = new StagingApi(apiClient)
   private lazy val experimentalApi: ExperimentalApi = new ExperimentalApi(apiClient)
   private lazy val healthCheckApi: HealthCheckApi = new HealthCheckApi(apiClient)
 
@@ -69,11 +75,13 @@ object LakeFSStorageClient {
   private val branchName: String = "main"
 
   def healthCheck(): Unit = {
-    try {
+    RetryUtil.withBackoff(
+      description = "connect to lake fs server",
+      maxAttempts = HealthCheckMaxAttempts,
+      initialDelayMillis = HealthCheckInitialDelayMillis,
+      onRetry = attempt => logger.warn(attempt.message)
+    ) {
       this.healthCheckApi.healthCheck().execute()
-    } catch {
-      case e: Exception =>
-        throw new RuntimeException(s"Failed to connect to lake fs server: ${e.getMessage}")
     }
   }
 
@@ -150,50 +158,13 @@ object LakeFSStorageClient {
   }
 
   /**
-    * Removes a file from the repository (similar to Git rm).
-    *
-    * @param repoName Repository name.
-    * @param branch   Branch name.
-    * @param filePath Path in the repository to delete.
-    */
-  def removeFileFromRepo(repoName: String, branch: String, filePath: String): Unit = {
-    objectsApi.deleteObject(repoName, branch, filePath).execute()
-  }
-
-  /**
-    * Executes operations and creates a commit (similar to a transactional commit).
-    *
-    * @param repoName      Repository name.
-    * @param commitMessage Commit message.
-    * @param operations    File operations to perform before committing.
-    */
-  def withCreateVersion(repoName: String, commitMessage: String)(
-      operations: => Unit
-  ): Commit = {
-    operations
-    val commit = new CommitCreation()
-      .message(commitMessage)
-
-    commitsApi.commit(repoName, branchName, commit).execute()
-  }
-
-  /**
-    * Retrieves file content from a specific commit and path.
+    * Generates a presigned URL for downloading a file directly from the underlying object store,
+    * bypassing the LakeFS server.
     *
     * @param repoName     Repository name.
     * @param commitHash   Commit hash of the version.
     * @param filePath     Path to the file in the repository.
-    */
-  def retrieveFileContent(repoName: String, commitHash: String, filePath: String): File = {
-    objectsApi.getObject(repoName, commitHash, filePath).execute()
-  }
-
-  /**
-    * Retrieves file content from a specific commit and path.
-    *
-    * @param repoName     Repository name.
-    * @param commitHash   Commit hash of the version.
-    * @param filePath     Path to the file in the repository.
+    * @return             A time-limited presigned URL pointing at the object's physical address.
     */
   def getFilePresignedUrl(repoName: String, commitHash: String, filePath: String): String = {
     objectsApi.statObject(repoName, commitHash, filePath).presign(true).execute().getPhysicalAddress
@@ -217,6 +188,38 @@ object LakeFSStorageClient {
       .parts(numberOfParts)
       .execute()
 
+  }
+
+  /**
+    * Uploads one part of a presigned multipart upload: PUTs exactly `len` bytes from `buf` to
+    * the presigned URL and returns the part's ETag.
+    *
+    * This is the middle step of the presigned lifecycle — [[initiatePresignedMultipartUploads]]
+    * hands out the URLs, this uploads each part, and the returned ETag is the second half of the
+    * `(partNumber, eTag)` pairs [[completePresignedMultipartUploads]] consumes.
+    *
+    * @param buf     Buffer holding the part's bytes.
+    * @param len     Number of bytes from `buf` to send.
+    * @param url     Presigned URL for this part.
+    * @param partNum Part number, used only for the error message.
+    * @return        The ETag returned by the object store, quotes stripped.
+    */
+  def put(buf: Array[Byte], len: Int, url: String, partNum: Int): String = {
+    val conn = new URL(url).openConnection().asInstanceOf[HttpURLConnection]
+    conn.setDoOutput(true)
+    conn.setRequestMethod("PUT")
+    conn.setFixedLengthStreamingMode(len)
+    val out = conn.getOutputStream
+    out.write(buf, 0, len)
+    out.close()
+
+    val code = conn.getResponseCode
+    if (code != HttpURLConnection.HTTP_OK && code != HttpURLConnection.HTTP_CREATED)
+      throw new RuntimeException(s"Part $partNum upload failed (HTTP $code)")
+
+    val etag = conn.getHeaderField("ETag").replace("\"", "")
+    conn.disconnect()
+    etag
   }
 
   /**
@@ -450,6 +453,21 @@ object LakeFSStorageClient {
       .statObject(repoName, commitHash, filePath)
       .execute()
       .getSizeBytes
+      .longValue()
+  }
+
+  /**
+    * Gets the last-modified time of a staged (uncommitted) object on the main branch.
+    *
+    * @param repoName Repository name.
+    * @param filePath Path to the staged object in the repository.
+    * @return Last-modified time as Unix epoch seconds.
+    */
+  def getStagedObjectMtime(repoName: String, filePath: String): Long = {
+    objectsApi
+      .statObject(repoName, branchName, filePath)
+      .execute()
+      .getMtime
       .longValue()
   }
 }

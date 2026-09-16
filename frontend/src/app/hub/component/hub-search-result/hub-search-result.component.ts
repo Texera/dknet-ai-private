@@ -18,7 +18,7 @@
  */
 
 import { AfterViewInit, Component, Input, OnInit, ViewChild } from "@angular/core";
-import { Router } from "@angular/router";
+import { ActivatedRoute } from "@angular/router";
 import { NgIf } from "@angular/common";
 import { NzButtonComponent } from "ng-zorro-antd/button";
 import { NzIconDirective } from "ng-zorro-antd/icon";
@@ -28,17 +28,18 @@ import {
   SearchResultsViewMode,
 } from "../../../dashboard/component/user/search-results/search-results.component";
 import { FiltersComponent } from "../../../dashboard/component/user/filters/filters.component";
-import { DatasetCardItemComponent } from "../../../dashboard/component/user/dataset-card-item/dataset-card-item.component";
+import { CardItemComponent } from "../../../dashboard/component/user/list-item/card-item/card-item.component";
 import { UntilDestroy, untilDestroyed } from "@ngneat/until-destroy";
 import { SortMethod } from "../../../dashboard/type/sort-method";
 import { UserService } from "../../../common/service/user/user.service";
 import { SearchService } from "../../../dashboard/service/user/search.service";
-import { isDefined } from "../../../common/util/predicate";
 import { firstValueFrom } from "rxjs";
 import { map } from "rxjs/operators";
 import { SortButtonComponent } from "../../../dashboard/component/user/sort-button/sort-button.component";
+import { EntityType } from "../../service/hub.service";
 
-const HUB_DATASET_VIEW_MODE_STORAGE_KEY = "texera.hub.dataset.viewMode";
+/** One key for every kind the hub browses; the "dataset" in it is historical. */
+const HUB_VIEW_MODE_STORAGE_KEY = "texera.hub.dataset.viewMode";
 
 @UntilDestroy()
 @Component({
@@ -53,20 +54,34 @@ const HUB_DATASET_VIEW_MODE_STORAGE_KEY = "texera.hub.dataset.viewMode";
     SortButtonComponent,
     FiltersComponent,
     SearchResultsComponent,
-    DatasetCardItemComponent,
+    CardItemComponent,
   ],
 })
 export class HubSearchResultComponent implements OnInit, AfterViewInit {
-  public searchType: "dataset" | "workflow" = "workflow";
+  /** The kind this page browses, named by the route rather than sniffed out of the URL. */
+  public entityType: EntityType = EntityType.Workflow;
+
+  /** The search API takes the literal resource type, which is exactly what the enum holds. */
+  public get searchType(): "workflow" | "dataset" | "model" {
+    return this.entityType as "workflow" | "dataset" | "model";
+  }
+
+  /**
+   * Datasets and models are the versioned resources: neither carries a modified or execution time,
+   * and both are worth browsing as cards because both have a cover image.
+   */
+  public get isVersionedResource(): boolean {
+    return this.entityType === EntityType.Dataset || this.entityType === EntityType.Model;
+  }
+
   public searchKeywords: string[] = [];
   currentUid = this.userService.getCurrentUser()?.uid;
-  public viewMode: SearchResultsViewMode =
-    localStorage.getItem(HUB_DATASET_VIEW_MODE_STORAGE_KEY) === "card" ? "card" : "list";
+  public viewMode: SearchResultsViewMode = localStorage.getItem(HUB_VIEW_MODE_STORAGE_KEY) === "card" ? "card" : "list";
 
   setViewMode(mode: SearchResultsViewMode): void {
     if (this.viewMode === mode) return;
     this.viewMode = mode;
-    localStorage.setItem(HUB_DATASET_VIEW_MODE_STORAGE_KEY, mode);
+    localStorage.setItem(HUB_VIEW_MODE_STORAGE_KEY, mode);
   }
 
   private isLogin = false;
@@ -88,7 +103,6 @@ export class HubSearchResultComponent implements OnInit, AfterViewInit {
   }
   private masterFilterList: ReadonlyArray<string> | null = null;
 
-  @Input() public pid?: number = undefined;
   @Input() public accessLevel?: string = undefined;
   public sortMethod = SortMethod.EditTimeDesc;
   lastSortMethod: SortMethod | null = null;
@@ -96,7 +110,7 @@ export class HubSearchResultComponent implements OnInit, AfterViewInit {
   constructor(
     private userService: UserService,
     private searchService: SearchService,
-    private router: Router
+    private route: ActivatedRoute
   ) {
     this.userService
       .userChanged()
@@ -107,11 +121,11 @@ export class HubSearchResultComponent implements OnInit, AfterViewInit {
   }
 
   ngOnInit() {
-    const url = this.router.url;
-    if (url.includes("dataset")) {
-      this.searchType = "dataset";
-    } else if (url.includes("workflow")) {
-      this.searchType = "workflow";
+    this.entityType = this.route.snapshot.data["entityType"] ?? EntityType.Workflow;
+    if (this.isVersionedResource) {
+      // These have no last-modified/execution time, so EditTimeDesc leaves the sort key NULL.
+      // Default to CreateTimeDesc so the newest appear first.
+      this.sortMethod = SortMethod.CreateTimeDesc;
     }
   }
 
@@ -123,8 +137,7 @@ export class HubSearchResultComponent implements OnInit, AfterViewInit {
   }
 
   /**
-   * Searches dataset or workflow based on the `searchType` determined from the full URL.
-   * @returns
+   * Searches the kind this page was routed for.
    *
    * todo: Integrate the search functions from different interfaces into a single method.
    */
@@ -144,10 +157,6 @@ export class HubSearchResultComponent implements OnInit, AfterViewInit {
     this.masterFilterList = this.filters.masterFilterList;
     this.searchKeywords = this.filters.getSearchKeywords();
     let filterParams = this.filters.getSearchFilterParameters();
-    if (isDefined(this.pid)) {
-      // force the project id in the search query to be the current pid.
-      filterParams.projectIds = [this.pid];
-    }
 
     this.searchResultsComponent.reset((start, count) => {
       return firstValueFrom(

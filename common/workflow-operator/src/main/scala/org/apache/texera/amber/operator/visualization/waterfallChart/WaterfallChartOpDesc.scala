@@ -20,7 +20,7 @@
 package org.apache.texera.amber.operator.visualization.waterfallChart
 
 import com.fasterxml.jackson.annotation.{JsonProperty, JsonPropertyDescription}
-import com.kjetland.jackson.jsonSchema.annotations.JsonSchemaTitle
+import com.kjetland.jackson.jsonSchema.annotations.{JsonSchemaInject, JsonSchemaTitle}
 import org.apache.texera.amber.core.tuple.{AttributeType, Schema}
 import org.apache.texera.amber.pybuilder.PythonTemplateBuilder.PythonTemplateBuilderStringContext
 import org.apache.texera.amber.pybuilder.PyStringTypes.EncodableString
@@ -30,19 +30,32 @@ import org.apache.texera.amber.operator.metadata.annotations.AutofillAttributeNa
 import org.apache.texera.amber.operator.metadata.{OperatorGroupConstants, OperatorInfo}
 import org.apache.texera.amber.pybuilder.PythonTemplateBuilder
 
+import javax.validation.constraints.NotNull
+
+// type constraint: each bar is a signed amount, formatted with f"{v:+}", so the y
+// column can only be numeric. The x column is the category axis and stays unconstrained.
+@JsonSchemaInject(json = """
+{
+  "attributeTypeRules": {
+    "yColumn": { "enum": ["integer", "long", "double"] }
+  }
+}
+""")
 class WaterfallChartOpDesc extends PythonOperatorDescriptor {
 
   @JsonProperty(value = "xColumn", required = true)
   @JsonSchemaTitle("X Axis Values")
   @JsonPropertyDescription("The column representing categories or stages")
   @AutofillAttributeName
-  var xColumn: EncodableString = _
+  @NotNull(message = "X Axis Values cannot be empty")
+  var xColumn: EncodableString = ""
 
   @JsonProperty(value = "yColumn", required = true)
   @JsonSchemaTitle("Y Axis Values")
   @JsonPropertyDescription("The column representing numeric values for each stage")
   @AutofillAttributeName
-  var yColumn: EncodableString = _
+  @NotNull(message = "Y Axis Values cannot be empty")
+  var yColumn: EncodableString = ""
 
   override def getOutputSchemas(
       inputSchemas: Map[PortIdentity, Schema]
@@ -60,6 +73,8 @@ class WaterfallChartOpDesc extends PythonOperatorDescriptor {
     )
 
   def createPlotlyFigure(): PythonTemplateBuilder = {
+    assert(xColumn.nonEmpty, "X Axis Values cannot be empty")
+    assert(yColumn.nonEmpty, "Y Axis Values cannot be empty")
     pyb"""
        |        x_values = table[$xColumn]
        |        y_values = table[$yColumn]

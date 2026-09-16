@@ -28,7 +28,7 @@ import {
   WorkflowResultUpdate,
 } from "../../types/execute-workflow.interface";
 import { WorkflowWebsocketService } from "../workflow-websocket/workflow-websocket.service";
-import { PaginatedResultEvent, WorkflowAvailableResultEvent } from "../../types/workflow-websocket.interface";
+import { PaginatedResultEvent } from "../../types/workflow-websocket.interface";
 import { map, Observable, of, pairwise, ReplaySubject, Subject } from "rxjs";
 import { v4 as uuid } from "uuid";
 import { IndexableObject } from "../../types/result-table.interface";
@@ -49,20 +49,33 @@ export class WorkflowResultService {
   private resultUpdateStream = new Subject<Record<string, WebResultUpdate | undefined>>();
   private resultTableStats = new ReplaySubject<Record<string, Record<string, Record<string, number>>>>(1);
   private resultInitiateStream = new Subject<string>();
+  // emits when clearResults() drops cached results, so the UI can drop stale frames
+  private resultClearedStream = new Subject<void>();
 
   constructor(private wsService: WorkflowWebsocketService) {
     this.wsService.subscribeToEvent("WebResultUpdateEvent").subscribe(event => {
       this.handleResultUpdate(event.updates);
       this.handleTableStatsUpdate(event.tableStats);
     });
-    this.wsService
-      .subscribeToEvent("WorkflowAvailableResultEvent")
-      .subscribe(event => this.handleCleanResultCache(event));
     this.resultTableStats.next({});
   }
 
   public hasAnyResult(operatorID: string): boolean {
     return this.hasResult(operatorID) || this.hasPaginatedResult(operatorID);
+  }
+
+  /**
+   * Whether the operator produced an actual, non-empty result. A step marked view-result still
+   * registers a (paginated) result service with zero tuples -- e.g. a UDF that only writes a file
+   * or logs -- so hasAnyResult alone is true for those. This checks the tuple count / snapshot
+   * length so an empty result reads as "no result".
+   */
+  public hasNonEmptyResult(operatorID: string): boolean {
+    const paginated = this.getPaginatedResultService(operatorID);
+    if (paginated) {
+      return paginated.getCurrentTotalNumTuples() > 0;
+    }
+    return (this.getResultService(operatorID)?.getCurrentResultSnapshot()?.length ?? 0) > 0;
   }
 
   public hasResult(operatorID: string): boolean {
@@ -87,6 +100,14 @@ export class WorkflowResultService {
     return this.resultInitiateStream.asObservable();
   }
 
+  /**
+   * Emits when clearResults() drops cached results, so consumers can tear down
+   * stale frames (clearing the caches alone won't re-render a displayed operator).
+   */
+  public getResultClearedStream(): Observable<void> {
+    return this.resultClearedStream.asObservable();
+  }
+
   public getPaginatedResultService(operatorID: string): OperatorPaginationResultService | undefined {
     return this.paginatedResultServices.get(operatorID);
   }
@@ -95,46 +116,16 @@ export class WorkflowResultService {
     return this.operatorResultServices.get(operatorID);
   }
 
-  private handleCleanResultCache(event: WorkflowAvailableResultEvent): void {
-    const removedOrInvalidatedOperators = new Set<string>();
-    // remove operators that no longer have results
-    this.operatorResultServices.forEach((_, op) => {
-      if (!(op in event.availableOperators)) {
-        this.operatorResultServices.delete(op);
-        removedOrInvalidatedOperators.add(op);
-      }
-    });
-    this.paginatedResultServices.forEach((_, op) => {
-      if (!(op in event.availableOperators)) {
-        this.paginatedResultServices.delete(op);
-        removedOrInvalidatedOperators.add(op);
-      }
-    });
-    // for each operator that has results:
-    Object.entries(event.availableOperators).forEach(availableOp => {
-      const op = availableOp[0];
-      const cacheValid = availableOp[1].cacheValid;
-      const outputMode = availableOp[1].outputMode;
-
-      // make sure to init or reuse result service for each operator
-      const resultService = (() => {
-        if (outputMode.type === "PaginationMode") {
-          return this.getOrInitPaginatedResultService(op);
-        } else {
-          return this.getOrInitResultService(op);
-        }
-      })();
-
-      // invalidate frontend cache if needed
-      if (!cacheValid) {
-        resultService.reset();
-        removedOrInvalidatedOperators.add(op);
-      }
-    });
-
-    const invalidatedOperatorsUpdate: Record<string, undefined> = {};
-    removedOrInvalidatedOperators.forEach(op => (invalidatedOperatorsUpdate[op] = undefined));
-    this.resultUpdateStream.next(invalidatedOperatorsUpdate);
+  /**
+   * Drop cached results and reset table stats so a re-entered workflow doesn't show
+   * stale results (resultTableStats is a ReplaySubject, so push an empty snapshot).
+   * Emits resultClearedStream so subscribers tear down already-displayed frames.
+   */
+  public clearResults(): void {
+    this.operatorResultServices.clear();
+    this.paginatedResultServices.clear();
+    this.resultTableStats.next({});
+    this.resultClearedStream.next();
   }
 
   private handleResultUpdate(event: WorkflowResultUpdate): void {
@@ -251,7 +242,6 @@ export class OperatorResultService {
 export class OperatorPaginationResultService {
   private pendingRequests: Map<string, Subject<PaginatedResultEvent>> = new Map();
   private resultCache: Map<number, ReadonlyArray<object>> = new Map();
-  private prevStatsCache: Record<string, Record<string, number>> = {};
   private statsCache: Record<string, Record<string, number>> = {};
   private currentPageIndex: number = 1;
   private currentTotalNumTuples: number = 0;
@@ -269,10 +259,6 @@ export class OperatorPaginationResultService {
 
   public getStats(): Record<string, Record<string, number>> {
     return this.statsCache;
-  }
-
-  public getPrevStats(): Record<string, Record<string, number>> {
-    return this.prevStatsCache;
   }
 
   public getCurrentPageIndex(): number {
@@ -356,13 +342,7 @@ export class OperatorPaginationResultService {
   }
 
   public handleStatsUpdate(statsUpdate: Record<string, Record<string, number>>): void {
-    if (!this.statsCache) {
-      this.statsCache = statsUpdate;
-      this.prevStatsCache = statsUpdate;
-    } else {
-      this.prevStatsCache = this.statsCache;
-      this.statsCache = statsUpdate;
-    }
+    this.statsCache = statsUpdate;
   }
 
   private handlePaginationResult(res: PaginatedResultEvent): void {

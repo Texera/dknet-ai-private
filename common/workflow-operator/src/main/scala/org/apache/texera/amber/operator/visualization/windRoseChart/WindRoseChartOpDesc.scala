@@ -20,7 +20,7 @@
 package org.apache.texera.amber.operator.visualization.windRoseChart
 
 import com.fasterxml.jackson.annotation.{JsonProperty, JsonPropertyDescription}
-import com.kjetland.jackson.jsonSchema.annotations.JsonSchemaTitle
+import com.kjetland.jackson.jsonSchema.annotations.{JsonSchemaInject, JsonSchemaTitle}
 import org.apache.texera.amber.core.tuple.{AttributeType, Schema}
 import org.apache.texera.amber.core.workflow.OutputPort.OutputMode
 import org.apache.texera.amber.pybuilder.PythonTemplateBuilder.PythonTemplateBuilderStringContext
@@ -32,6 +32,16 @@ import org.apache.texera.amber.operator.metadata.{OperatorGroupConstants, Operat
 import org.apache.texera.amber.pybuilder.PythonTemplateBuilder
 import javax.validation.constraints.NotNull
 
+// The radial value is the length of each wedge, so it has to be a number: given
+// text, plotly turns the radial axis categorical and the wedges stop meaning
+// anything. The angle is a direction label and takes any type.
+@JsonSchemaInject(json = """
+{
+  "attributeTypeRules": {
+    "rColumn": { "enum": ["integer", "long", "double"] }
+  }
+}
+""")
 class WindRoseChartOpDesc extends PythonOperatorDescriptor {
 
   @JsonProperty(value = "rColumn", required = true)
@@ -39,14 +49,14 @@ class WindRoseChartOpDesc extends PythonOperatorDescriptor {
   @JsonPropertyDescription("Numeric values representing magnitude (e.g., frequency)")
   @AutofillAttributeName
   @NotNull(message = "Radial Values (r) column must be selected.")
-  var rColumn: EncodableString = _
+  var rColumn: EncodableString = ""
 
   @JsonProperty(value = "thetaColumn", required = true)
   @JsonSchemaTitle("Angular Values (θ)")
   @JsonPropertyDescription("Direction or angle categories (e.g., N, NE, E)")
   @AutofillAttributeName
   @NotNull(message = "Angular Values (θ) column must be selected.")
-  var thetaColumn: EncodableString = _
+  var thetaColumn: EncodableString = ""
 
   @JsonProperty(value = "colorColumn", required = false)
   @JsonSchemaTitle("Color Group")
@@ -72,6 +82,8 @@ class WindRoseChartOpDesc extends PythonOperatorDescriptor {
   }
 
   def createPlotlyFigure(): PythonTemplateBuilder = {
+    assert(rColumn.nonEmpty, "Radial Values (r) column must be selected.")
+    assert(thetaColumn.nonEmpty, "Angular Values (θ) column must be selected.")
     val colorArg =
       if (colorColumn != null && colorColumn.nonEmpty)
         pyb"""

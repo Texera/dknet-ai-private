@@ -30,17 +30,21 @@ import org.apache.texera.amber.operator.metadata.annotations.AutofillAttributeNa
 import org.apache.texera.amber.operator.metadata.{OperatorGroupConstants, OperatorInfo}
 import org.apache.texera.amber.pybuilder.PythonTemplateBuilder
 
+import javax.validation.constraints.NotNull
+
 class NetworkGraphOpDesc extends PythonOperatorDescriptor {
   @JsonProperty(required = true)
   @JsonSchemaTitle("Source Column")
   @JsonPropertyDescription("Source node for edge in graph")
   @AutofillAttributeName
+  @NotNull(message = "Source Column cannot be empty")
   var source: EncodableString = ""
 
   @JsonProperty(required = true)
   @JsonSchemaTitle("Destination Column")
   @JsonPropertyDescription("Destination node for edge in graph")
   @AutofillAttributeName
+  @NotNull(message = "Destination Column cannot be empty")
   var destination: EncodableString = ""
 
   @JsonProperty(defaultValue = "Network Graph")
@@ -63,8 +67,8 @@ class NetworkGraphOpDesc extends PythonOperatorDescriptor {
     )
 
   def manipulateTable(): PythonTemplateBuilder = {
-    assert(source.nonEmpty)
-    assert(destination.nonEmpty)
+    assert(source.nonEmpty, "Source Column cannot be empty")
+    assert(destination.nonEmpty, "Destination Column cannot be empty")
     pyb"""
          |        table = table.dropna(subset = [$source]) #remove missing values
          |        table = table.dropna(subset = [$destination]) #remove missing values
@@ -94,13 +98,17 @@ class NetworkGraphOpDesc extends PythonOperatorDescriptor {
          |        if not table.empty:
          |            sources = table[$source]
          |            destinations = table[$destination]
-         |            nodes = set(sources + destinations)
+         |            # Union of the two columns, in first-appearance order. Adding the
+         |            # Series pairs them off element-wise; a set reorders per run.
+         |            nodes = list(dict.fromkeys(pd.concat([sources, destinations]).tolist()))
          |            G = nx.Graph()
          |            for node in nodes:
          |                G.add_node(node)
          |            for i, j in table.iterrows():
          |                G.add_edges_from([(j[$source], j[$destination])])
-         |            pos = nx.spring_layout(G, k=0.5, iterations=50)
+         |            # Seeded so the same graph draws the same picture every run;
+         |            # spring_layout starts from random positions otherwise.
+         |            pos = nx.spring_layout(G, k=0.5, iterations=50, seed=0)
          |            for n, p in pos.items():
          |                G.nodes[n]['pos'] = p
          |

@@ -25,7 +25,6 @@
         nz-button
         class="create-btn"
         (click)="onClickCreateNewWorkflowFromDashboard()"
-        [disabled]="accessLevel === 'READ'"
         title="Create a new workflow">
         <i
           nz-icon
@@ -39,7 +38,6 @@
         <texera-sort-button (sortMethodChange)="sortMethod = $event; search()"></texera-sort-button>
         <nz-upload [nzBeforeUpload]="onClickUploadExistingWorkflowFromLocal">
           <button
-            [disabled]="accessLevel === 'READ'"
             nz-button
             title="Upload ZIP/JSON file as workflow"
             nz-tooltip="Upload ZIP/JSON file as workflow"
@@ -51,6 +49,19 @@
               nzTheme="outline"></i>
           </button>
         </nz-upload>
+        <button
+          *ngIf="pythonNotebookMigrationEnabled"
+          nz-button
+          (click)="openAiGenerateModal()"
+          title="AI generate a workflow from a Python notebook"
+          nz-tooltip="AI generate a workflow from a Python notebook"
+          nzTooltipPlacement="bottom"
+          type="button">
+          <i
+            nz-icon
+            nzType="robot"
+            nzTheme="outline"></i>
+        </button>
         <button
           *ngIf="multiWorkflowsOperationButtonEnabled()"
           (click)="toggleSelection()"
@@ -104,37 +115,27 @@
             nzType="delete"></i>
         </button>
         <button
-          *ngIf="pid !== undefined"
-          [disabled]="accessLevel === 'READ'"
-          (click)="onClickOpenAddWorkflow()"
           nz-button
-          title="Add workflow(s) to project"
-          nz-tooltip="Add workflow(s) to project"
-          nzTooltipPlacement="bottom"
-          type="button">
+          title="List View"
+          (click)="setViewType('list')"
+          [nzType]="viewType === 'list' ? 'primary' : 'default'">
           <i
             nz-icon
-            nzTheme="outline"
-            nzType="plus-square"></i>
+            nzType="bars"
+            nzTheme="outline"></i>
         </button>
         <button
-          *ngIf="pid !== undefined"
-          [disabled]="accessLevel === 'READ'"
-          (click)="onClickOpenRemoveWorkflow()"
           nz-button
-          title="Remove workflow(s) from project"
-          nz-tooltip="Remove workflow(s) from project"
-          nzTooltipPlacement="bottom"
-          type="button">
+          title="Card View"
+          (click)="setViewType('card')"
+          [nzType]="viewType === 'card' ? 'primary' : 'default'">
           <i
             nz-icon
-            nzTheme="outline"
-            nzType="minus-square"></i>
+            nzType="appstore"
+            nzTheme="outline"></i>
         </button>
       </nz-space-compact>
-      <texera-filters
-        [pid]="pid"
-        #filters></texera-filters>
+      <texera-filters #filters></texera-filters>
     </div>
   </nz-card>
 
@@ -153,9 +154,27 @@
     </nz-select>
   </div>
 
+  <ng-template
+    #workflowCardTpl
+    let-entry>
+    <texera-card-item
+      class="workflow-card-item"
+      [entry]="entry"
+      [currentUid]="currentUid"
+      [isPrivateSearch]="true"
+      [editable]="true"
+      (deleted)="deleteWorkflow(entry)"
+      (duplicated)="onClickDuplicateWorkflow(entry)"
+      (refresh)="refreshSearchResult()"
+      (checkboxChanged)="searchResultsComponent.onEntryCheckboxChange()">
+    </texera-card-item>
+  </ng-template>
+
   <texera-search-results
     [editable]="true"
     [isPrivateSearch]="true"
+    [viewMode]="viewType"
+    [cardTemplate]="workflowCardTpl"
     (deleted)="deleteWorkflow($event)"
     (refresh)="refreshSearchResult()"
     (duplicated)="onClickDuplicateWorkflow($event)"

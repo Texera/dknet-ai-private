@@ -19,7 +19,7 @@
 
 package org.apache.texera.amber.engine.architecture.sendsemantics.partitioners
 
-import org.apache.texera.amber.config.ApplicationConfig
+import org.apache.texera.common.config.ApplicationConfig
 import org.apache.texera.amber.core.state.State
 import org.apache.texera.amber.core.tuple.Tuple
 import org.apache.texera.amber.core.virtualidentity.ActorVirtualIdentity
@@ -49,9 +49,9 @@ class NetworkOutputBuffer(
     }
   }
 
-  def sendState(state: State): Unit = {
+  def sendState(state: State, loopCounter: Long = 0L, loopStartId: String = ""): Unit = {
     flush()
-    dataOutputPort.sendTo(to, StateFrame(state))
+    dataOutputPort.sendTo(to, StateFrame(state, loopCounter, loopStartId))
     flush()
   }
 

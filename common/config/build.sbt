@@ -38,7 +38,6 @@ Global / concurrentRestrictions += Tags.limit(Tags.Test, 1)
 
 // Scala compiler options
 Compile / scalacOptions ++= Seq(
-  "-Xelide-below", "WARNING",       // Turn on optimizations with "WARNING" as the threshold
   "-feature",                       // Check feature warnings
   "-deprecation",                   // Check deprecation warnings
   "-Ywarn-unused:imports"           // Check for unused imports
@@ -50,5 +49,6 @@ Compile / scalacOptions ++= Seq(
 
 // Core Dependencies
 libraryDependencies ++= Seq(
-  "com.typesafe" % "config" % "1.4.6" // For configuration management
+  "com.typesafe" % "config" % "1.4.6", // For configuration management
+  "org.scalatest" %% "scalatest" % "3.2.15" % Test // ScalaTest (for unit tests)
 )

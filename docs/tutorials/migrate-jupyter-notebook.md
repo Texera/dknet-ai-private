@@ -1,3 +1,22 @@
+<!--
+  ~ Licensed to the Apache Software Foundation (ASF) under one
+  ~ or more contributor license agreements.  See the NOTICE file
+  ~ distributed with this work for additional information
+  ~ regarding copyright ownership.  The ASF licenses this file
+  ~ to you under the Apache License, Version 2.0 (the
+  ~ "License"); you may not use this file except in compliance
+  ~ with the License.  You may obtain a copy of the License at
+  ~
+  ~   http://www.apache.org/licenses/LICENSE-2.0
+  ~
+  ~ Unless required by applicable law or agreed to in writing,
+  ~ software distributed under the License is distributed on an
+  ~ "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+  ~ KIND, either express or implied.  See the License for the
+  ~ specific language governing permissions and limitations
+  ~ under the License.
+-->
+
 ---
 title: "Migrate a Jupyter Notebook to a Texera Workflow"
 weight: 60
@@ -16,7 +35,7 @@ Migrating notebook code into Texera operators, then wiring those operators with 
 
 ## 2. Example: convert a "tweet analysis" notebook into a workflow
 
-> The [notebook](https://hub.texera.io/user/dataset/124), [dataset](https://hub.texera.io/user/dataset/124) and [workflow](https://hub.texera.io/user/workflow/1162) in this example are available on [TexeraHub](https://hub.texera.io/about).
+> The [notebook](https://hub.texera.io/dashboard/user/dataset/124), [dataset](https://hub.texera.io/dashboard/user/dataset/124) and [workflow](https://hub.texera.io/dashboard/user/workspace/1162) in this example are available on [TexeraHub](https://hub.texera.io/dashboard/about).
 
 ### Notebook Overview
 We will use a Tweet-Analysis notebook to demonstrate the migration process. The notebook has three cells:
@@ -174,17 +193,3 @@ Texera contains more than 110 built-in operators that cover data loading, cleani
 - **Identify the data dependencies in the Python code in order to connect operators**
 
 In Texera, data flows along links. Before wiring operators, review the notebook to understand which variables feed which; then reproduce those dependencies via links so the executions matches the original notebook.
-
-
-
-
-
-
-
-
-
-
-
-
-
-

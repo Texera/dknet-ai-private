@@ -22,7 +22,7 @@ package org.apache.texera.web.service
 import com.typesafe.scalalogging.LazyLogging
 import org.apache.texera.amber.core.workflow.cache.FingerprintUtil
 import org.apache.texera.amber.core.workflow.{GlobalPortIdentity, PhysicalPlan, WorkflowContext}
-import org.apache.texera.amber.engine.architecture.controller.PortMaterialized
+import org.apache.texera.amber.engine.architecture.coordinator.PortMaterialized
 import org.apache.texera.amber.engine.common.client.AmberClient
 import org.apache.texera.amber.util.serde.GlobalPortIdentitySerde.SerdeOps
 import org.apache.texera.web.SubscriptionManager

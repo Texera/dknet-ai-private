@@ -23,14 +23,15 @@ import com.flipkart.zjsonpatch.{JsonDiff, JsonPatch}
 import io.dropwizard.auth.Auth
 import org.apache.texera.amber.util.JSONUtils.objectMapper
 import org.apache.texera.auth.SessionUser
-import org.apache.texera.config.UserSystemConfig
+import org.apache.texera.common.config.UserSystemConfig
 import org.apache.texera.dao.SqlServer
 import org.apache.texera.dao.jooq.generated.Tables.WORKFLOW_VERSION
 import org.apache.texera.dao.jooq.generated.tables.daos.{WorkflowDao, WorkflowVersionDao}
 import org.apache.texera.dao.jooq.generated.tables.pojos.{Workflow, WorkflowVersion}
 import org.apache.texera.web.resource.dashboard.user.workflow.WorkflowResource.{
   DashboardWorkflow,
-  assignNewOperatorIds
+  assignNewOperatorIds,
+  newUnpublishedWorkflow
 }
 import org.apache.texera.web.resource.dashboard.user.workflow.WorkflowVersionResource._
 import org.jooq.DSLContext
@@ -428,14 +429,12 @@ class WorkflowVersionResource {
     val newWorkflow: DashboardWorkflow =
       try {
         workflowResource.createWorkflow(
-          new Workflow(
-            null,
+          newUnpublishedWorkflow(
             newWorkflowName,
             workflowVersion.getDescription,
             assignNewOperatorIds(workflowVersion.getContent),
-            null,
-            null,
-            false
+            // carry the workflow's current default-view preference onto the clone
+            workflowVersion.getDefaultView
           ),
           sessionUser
         )

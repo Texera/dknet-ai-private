@@ -20,7 +20,7 @@
 package org.apache.texera.amber.operator.visualization.ternaryContour
 
 import com.fasterxml.jackson.annotation.{JsonProperty, JsonPropertyDescription}
-import com.kjetland.jackson.jsonSchema.annotations.JsonSchemaTitle
+import com.kjetland.jackson.jsonSchema.annotations.{JsonSchemaInject, JsonSchemaTitle}
 import org.apache.texera.amber.core.tuple.{AttributeType, Schema}
 import org.apache.texera.amber.core.workflow.OutputPort.OutputMode
 import org.apache.texera.amber.pybuilder.PythonTemplateBuilder.PythonTemplateBuilderStringContext
@@ -31,6 +31,8 @@ import org.apache.texera.amber.operator.metadata.annotations.AutofillAttributeNa
 import org.apache.texera.amber.operator.metadata.{OperatorGroupConstants, OperatorInfo}
 import org.apache.texera.amber.pybuilder.PythonTemplateBuilder
 
+import javax.validation.constraints.NotNull
+
 /**
   * Visualization Operator for Ternary Plots.
   *
@@ -38,31 +40,51 @@ import org.apache.texera.amber.pybuilder.PythonTemplateBuilder
   * The points can optionally be color coded using a data field.
   */
 
+// type constraint: the three variables are compared against 0 and summed as ternary
+// proportions, and the measured value is interpolated, so all four can only be numeric.
+@JsonSchemaInject(json = """
+{
+  "attributeTypeRules": {
+    "firstVariable": { "enum": ["integer", "long", "double"] },
+    "secondVariable": { "enum": ["integer", "long", "double"] },
+    "thirdVariable": { "enum": ["integer", "long", "double"] },
+    "fourthVariable": { "enum": ["integer", "long", "double"] }
+  }
+}
+""")
 class TernaryContourOpDesc extends PythonOperatorDescriptor {
 
   // Add annotations for the first variable
   @JsonProperty(value = "firstVariable", required = true)
   @JsonSchemaTitle("Variable 1")
   @JsonPropertyDescription("First variable data field")
-  @AutofillAttributeName var firstVariable: EncodableString = ""
+  @AutofillAttributeName
+  @NotNull(message = "Variable 1 cannot be empty")
+  var firstVariable: EncodableString = ""
 
   // Add annotations for the second variable
   @JsonProperty(value = "secondVariable", required = true)
   @JsonSchemaTitle("Variable 2")
   @JsonPropertyDescription("Second variable data field")
-  @AutofillAttributeName var secondVariable: EncodableString = ""
+  @AutofillAttributeName
+  @NotNull(message = "Variable 2 cannot be empty")
+  var secondVariable: EncodableString = ""
 
   // Add annotations for the third variable
   @JsonProperty(value = "thirdVariable", required = true)
   @JsonSchemaTitle("Variable 3")
   @JsonPropertyDescription("Third variable data field")
-  @AutofillAttributeName var thirdVariable: EncodableString = ""
+  @AutofillAttributeName
+  @NotNull(message = "Variable 3 cannot be empty")
+  var thirdVariable: EncodableString = ""
 
   // Add annotations for the fourth variable
   @JsonProperty(value = "fourthVariable", required = true)
   @JsonSchemaTitle("Measured Value")
   @JsonPropertyDescription("Measured value data field")
-  @AutofillAttributeName var fourthVariable: EncodableString = ""
+  @AutofillAttributeName
+  @NotNull(message = "Measured Value cannot be empty")
+  var fourthVariable: EncodableString = ""
 
   // OperatorInfo instance describing ternary plot
   override def operatorInfo: OperatorInfo =
@@ -86,9 +108,10 @@ class TernaryContourOpDesc extends PythonOperatorDescriptor {
   /** Returns a Python string that drops any tuples with missing values */
   def manipulateTable(): PythonTemplateBuilder = {
     // Check for any empty data field names
-    assert(
-      firstVariable.nonEmpty && secondVariable.nonEmpty && thirdVariable.nonEmpty && fourthVariable.nonEmpty
-    )
+    assert(firstVariable.nonEmpty, "Variable 1 cannot be empty")
+    assert(secondVariable.nonEmpty, "Variable 2 cannot be empty")
+    assert(thirdVariable.nonEmpty, "Variable 3 cannot be empty")
+    assert(fourthVariable.nonEmpty, "Measured Value cannot be empty")
     pyb"""
        |        # Remove any tuples that contain missing values
        |        table.dropna(subset=[$firstVariable, $secondVariable, $thirdVariable, $fourthVariable], inplace = True)

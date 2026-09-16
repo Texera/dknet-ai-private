@@ -1,0 +1,271 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ .Release.Name }}-static-routes
+  namespace: {{ .Release.Namespace }}
+spec:
+  parentRefs:
+    - name: {{ .Release.Name }}-gateway
+  {{- if and .Values.gatewayConfig .Values.gatewayConfig.hostname }}
+  hostnames:
+    - {{ .Values.gatewayConfig.hostname }}
+  {{- end }}
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /api/computing-unit
+      backendRefs:
+        - name: workflow-computing-unit-manager-svc
+          port: 8888
+    # The curated-image catalogue lives on the computing-unit manager, not the webserver.
+    # Without its own rule it falls through to the /api catch-all and every request 404s.
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /api/cu-image
+      backendRefs:
+        - name: workflow-computing-unit-manager-svc
+          port: 8888
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /api/compile
+      backendRefs:
+        - name: workflow-compiling-service-svc
+          port: 9090
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /api/dataset
+        - path:
+            type: PathPrefix
+            value: /api/access/dataset
+        # PathPrefix matches whole path segments, so /api/model and the /api/models
+        # LLM route below stay distinct.
+        - path:
+            type: PathPrefix
+            value: /api/model
+        - path:
+            type: PathPrefix
+            value: /api/access/model
+      backendRefs:
+        - name: file-service-svc
+          port: 9092
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /api/access/computing-unit
+      backendRefs:
+        - name: workflow-computing-unit-manager-svc
+          port: 8888
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /api/config
+      backendRefs:
+        - name: config-service-svc
+          port: 9094
+    {{- if .Values.notebookMigrationService.enabled }}
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /api/notebook-migration
+      # Provisioning waits for a pod to terminate and then to answer, 60s each, so Envoy's
+      # 15s default cuts off requests the service would have completed.
+      timeouts:
+        request: "3m"
+      backendRefs:
+        - name: {{ .Values.notebookMigrationService.name }}-svc
+          port: {{ .Values.notebookMigrationService.service.port }}
+    {{- end }}
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /api/models
+        - path:
+            type: PathPrefix
+            value: /api/chat
+      {{- if and .Values.gatewayConfig .Values.gatewayConfig.llmRequestTimeout }}
+      timeouts:
+        request: {{ .Values.gatewayConfig.llmRequestTimeout | quote }}
+      {{- end }}
+      backendRefs:
+        - name: access-control-service-svc
+          port: 9096
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /rtc
+      backendRefs:
+        - name: y-websocket-server-svc
+          port: 1234
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /python-language-server
+      backendRefs:
+        - name: python-language-server-svc
+          port: 3000
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /api/models
+        - path:
+            type: PathPrefix
+            value: /api/chat
+      backendRefs:
+        - name: {{ .Release.Name }}-{{ .Values.accessControlService.name }}-svc
+          port: {{ .Values.accessControlService.service.port }}
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /api
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: webserver-svc
+          port: 8080
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ .Release.Name }}-dynamic-routes
+  namespace: {{ .Release.Namespace }}
+spec:
+  parentRefs:
+    - name: {{ .Release.Name }}-gateway
+  {{- if and .Values.gatewayConfig .Values.gatewayConfig.hostname }}
+  hostnames:
+    - {{ .Values.gatewayConfig.hostname }}
+  {{- end }}
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /wsapi/cu-ssh
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplacePrefixMatch
+              replacePrefixMatch: /
+      backendRefs:
+        - group: gateway.envoyproxy.io
+          kind: Backend
+          name: texera-dynamic-backend
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /wsapi
+        - path:
+            type: RegularExpression
+            value: "^/api/executions/\\d+/stats/\\d+$"
+        - path:
+            type: PathPrefix
+            value: /api/executions/result/export
+        - path:
+            type: PathPrefix
+            value: /api/pve
+        {{- if .Values.notebookMigrationService.enabled }}
+        # Per-user JupyterLab. ExtAuthz reads the uid from the path and rewrites Host to
+        # that user's pod; the per-user Jupyter token is what authorizes the request.
+        - path:
+            type: PathPrefix
+            value: {{ include "texera.jupyter.basePath" . }}
+        {{- end }}
+      backendRefs:
+        - group: gateway.envoyproxy.io
+          kind: Backend
+          name: texera-dynamic-backend
+---
+# Agent Service Route (a separate HTTPRoute so the BackendTrafficPolicy can
+# target it for consistent-hash routing). Covers REST and the
+# /api/agents/:id/react WebSocket. Longest-prefix matching gives /api/agents
+# priority over the /api catch-all in the static routes above.
+{{- if .Values.agentService.enabled }}
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ .Release.Name }}-agent-service-route
+  namespace: {{ .Release.Namespace }}
+spec:
+  parentRefs:
+    - name: {{ .Release.Name }}-gateway
+  {{- if and .Values.gatewayConfig .Values.gatewayConfig.hostname }}
+  hostnames:
+    - {{ .Values.gatewayConfig.hostname }}
+  {{- end }}
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /api/agents
+      backendRefs:
+        - name: agent-service-svc
+          port: 3001
+{{- end }}
+---
+# Agent Service Route (separate HTTPRoute for BackendTrafficPolicy targeting)
+{{- if .Values.agentService.enabled }}
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ .Release.Name }}-agent-service-route
+  namespace: {{ .Release.Namespace }}
+spec:
+  parentRefs:
+    - name: {{ .Release.Name }}-gateway
+  {{- if and .Values.gatewayConfig .Values.gatewayConfig.hostname }}
+  hostnames:
+    - {{ .Values.gatewayConfig.hostname }}
+  {{- end }}
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /api/agents
+      backendRefs:
+        - name: {{ .Release.Name }}-{{ .Values.agentService.name }}-svc
+          port: {{ .Values.agentService.service.port }}
+{{- end }}
+---
+# RustFS Route
+{{- if .Values.rustfs.gateway.enabled }}
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: texera-rustfs-route
+  namespace: {{ .Release.Namespace }}
+spec:
+  parentRefs:
+    - name: {{ .Release.Name }}-gateway
+  hostnames:
+    - {{ .Values.rustfs.gateway.hostname }}
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: {{ .Release.Name }}-rustfs-svc
+          port: 9000
+{{- end }}

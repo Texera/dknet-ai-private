@@ -28,9 +28,14 @@ import { DirectoryPathInputComponent } from "../../workspace/component/directory
 import { DatasetFileSelectorComponent } from "../../workspace/component/dataset-file-selector/dataset-file-selector.component";
 import { CollabWrapperComponent } from "./collab-wrapper/collab-wrapper/collab-wrapper.component";
 import { ClusterAutoCompleteComponent } from "src/app/workspace/component/cluster-autocomplete/cluster-autocomplete.component";
+import { ExposePropertyWrapperComponent } from "./expose-property-wrapper/expose-property-wrapper.component";
+import { EditableLabelWrapperComponent } from "./editable-label-wrapper/editable-label-wrapper.component";
 import { FormlyRepeatDndComponent } from "./repeat-dnd/repeat-dnd.component";
 import { UiUdfParametersComponent } from "../../workspace/component/ui-udf-parameters/ui-udf-parameters.component";
 import { DatasetVersionSelectorComponent } from "../../workspace/component/dataset-version-selector/dataset-version-selector.component";
+import { HuggingFaceImageUploadComponent } from "../../workspace/component/hugging-face-image-upload/hugging-face-image-upload.component";
+import { HuggingFaceComponent } from "../../workspace/component/hugging-face/hugging-face.component";
+import { HuggingFaceAudioUploadComponent } from "../../workspace/component/hugging-face-audio-upload/hugging-face-audio-upload.component";
 
 /**
  * Configuration for using Json Schema with Formly.
@@ -84,12 +89,17 @@ export const TEXERA_FORMLY_CONFIG = {
     { name: "directorypathinput", component: DirectoryPathInputComponent, wrappers: ["form-field"] },
     { name: "inputautocomplete", component: DatasetFileSelectorComponent, wrappers: ["form-field"] },
     { name: "datasetversionselector", component: DatasetVersionSelectorComponent, wrappers: ["form-field"] },
+    { name: "huggingface", component: HuggingFaceComponent, wrappers: ["form-field"] },
+    { name: "huggingface-audio-upload", component: HuggingFaceAudioUploadComponent, wrappers: ["form-field"] },
+    { name: "huggingface-image-upload", component: HuggingFaceImageUploadComponent, wrappers: ["form-field"] },
     { name: "repeat-section-dnd", component: FormlyRepeatDndComponent },
     { name: "ui-udf-parameters", component: UiUdfParametersComponent, wrappers: ["form-field"] },
   ],
   wrappers: [
     { name: "preset-wrapper", component: PresetWrapperComponent },
     { name: "collab-wrapper", component: CollabWrapperComponent },
+    { name: "expose-property-wrapper", component: ExposePropertyWrapperComponent },
+    { name: "editable-label-wrapper", component: EditableLabelWrapperComponent },
   ],
 };
 

@@ -27,7 +27,7 @@ import org.apache.texera.amber.clustering.SingleNodeListener
 import org.apache.texera.amber.core.executor.OpExecInitInfo
 import org.apache.texera.amber.core.tuple.Tuple
 import org.apache.texera.amber.core.virtualidentity.OperatorIdentity
-import org.apache.texera.amber.core.workflow.{PortIdentity, WorkflowContext}
+import org.apache.texera.amber.core.workflow.PortIdentity
 import org.apache.texera.amber.engine.common.AmberRuntime
 import org.apache.texera.amber.engine.e2e.TestUtils.{
   cleanupWorkflowExecutionData,
@@ -35,7 +35,7 @@ import org.apache.texera.amber.engine.e2e.TestUtils.{
   setUpWorkflowExecutionData
 }
 import org.apache.texera.amber.operator.{LogicalOp, TestOperators}
-import org.apache.texera.workflow.LogicalLink
+import org.apache.texera.common.compiler.model.LogicalLink
 import org.scalatest.{BeforeAndAfterAll, BeforeAndAfterEach, Outcome, Retries}
 import org.scalatest.flatspec.AnyFlatSpecLike
 
@@ -60,14 +60,15 @@ class ReconfigurationSpec
   implicit val timeout: Timeout = Timeout(5.seconds)
 
   val logger = Logger("ReconfigurationSpecLogger")
-  val ctx = new WorkflowContext()
+  private val specId = 3
+  val ctx = TestUtils.workflowContext(specId)
 
   override protected def beforeEach(): Unit = {
-    setUpWorkflowExecutionData()
+    setUpWorkflowExecutionData(specId)
   }
 
   override protected def afterEach(): Unit = {
-    cleanupWorkflowExecutionData()
+    cleanupWorkflowExecutionData(specId)
   }
 
   override def beforeAll(): Unit = {

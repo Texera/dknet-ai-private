@@ -19,7 +19,11 @@
 
 import { Component } from "@angular/core";
 import { GuiConfigService } from "./common/service/gui-config.service";
+import { DeploymentVersionService } from "./common/service/deployment-version/deployment-version.service";
+import { Version } from "../environments/version";
 import { UntilDestroy } from "@ngneat/until-destroy";
+import { NzIconService } from "ng-zorro-antd/icon";
+import { MODEL_ICON, MODEL_ICON_SVG } from "./common/icon/model-icon";
 
 @UntilDestroy()
 @Component({
@@ -40,14 +44,28 @@ import { UntilDestroy } from "@ngneat/until-destroy";
 export class AppComponent {
   configLoaded = false;
 
-  constructor(private config: GuiConfigService) {
+  constructor(
+    private configService: GuiConfigService,
+    private deploymentVersionService: DeploymentVersionService,
+    iconService: NzIconService
+  ) {
+    // ng-zorro has no icon that reads as an ML model, so this one is registered from Material Symbols.
+    iconService.addIconLiteral(MODEL_ICON, MODEL_ICON_SVG);
+
     // determine whether configuration was successfully loaded by APP_INITIALIZER
     try {
       // accessing env will throw if not loaded
-      void this.config.env;
+      void this.configService.env;
       this.configLoaded = true;
     } catch {
       this.configLoaded = false;
+    }
+
+    // Poll for new deployments only when the config opts in (off by default),
+    // config actually loaded, and this isn't the "dev" placeholder build where
+    // no deployments occur.
+    if (this.configLoaded && this.configService.env.deploymentVersionCheckEnabled && Version.buildNumber !== "dev") {
+      this.deploymentVersionService.startPollingForUpdates();
     }
   }
 

@@ -20,7 +20,7 @@
 package org.apache.texera.amber.operator.visualization.polarChart
 
 import com.fasterxml.jackson.annotation.{JsonProperty, JsonPropertyDescription}
-import com.kjetland.jackson.jsonSchema.annotations.JsonSchemaTitle
+import com.kjetland.jackson.jsonSchema.annotations.{JsonSchemaInject, JsonSchemaTitle}
 import org.apache.texera.amber.core.tuple.{AttributeType, Schema}
 import org.apache.texera.amber.core.workflow.OutputPort.OutputMode
 import org.apache.texera.amber.core.workflow.{InputPort, OutputPort, PortIdentity}
@@ -30,18 +30,33 @@ import org.apache.texera.amber.operator.metadata.{OperatorGroupConstants, Operat
 import org.apache.texera.amber.pybuilder.PyStringTypes.EncodableString
 import org.apache.texera.amber.pybuilder.PythonTemplateBuilder.PythonTemplateBuilderStringContext
 
+import javax.validation.constraints.NotNull
+
+// type constraint: r / theta are the polar coordinates, and the operator already
+// refuses a non-numeric column at run time with np.issubdtype -- this states the same
+// requirement where the form can act on it.
+@JsonSchemaInject(json = """
+{
+  "attributeTypeRules": {
+    "r": { "enum": ["integer", "long", "double"] },
+    "theta": { "enum": ["integer", "long", "double"] }
+  }
+}
+""")
 class PolarChartOpDesc extends PythonOperatorDescriptor {
 
   @JsonProperty(value = "r", required = true)
   @JsonSchemaTitle("r")
   @JsonPropertyDescription("The column name for radial values (must be numeric)")
   @AutofillAttributeName
+  @NotNull(message = "r cannot be empty")
   var r: EncodableString = ""
 
   @JsonProperty(value = "theta", required = true)
   @JsonSchemaTitle("theta")
   @JsonPropertyDescription("The column name for angular values (must be numeric)")
   @AutofillAttributeName
+  @NotNull(message = "theta cannot be empty")
   var theta: EncodableString = ""
 
   override def getOutputSchemas(

@@ -20,7 +20,7 @@
 package org.apache.texera.amber.operator.visualization.funnelPlot
 
 import com.fasterxml.jackson.annotation.{JsonProperty, JsonPropertyDescription}
-import com.kjetland.jackson.jsonSchema.annotations.{JsonSchemaInject, JsonSchemaTitle}
+import com.kjetland.jackson.jsonSchema.annotations.JsonSchemaTitle
 import org.apache.texera.amber.core.tuple.{AttributeType, Schema}
 import org.apache.texera.amber.pybuilder.PythonTemplateBuilder.PythonTemplateBuilderStringContext
 import org.apache.texera.amber.pybuilder.PyStringTypes.EncodableString
@@ -29,25 +29,22 @@ import org.apache.texera.amber.operator.PythonOperatorDescriptor
 import org.apache.texera.amber.operator.metadata.annotations.AutofillAttributeName
 import org.apache.texera.amber.operator.metadata.{OperatorGroupConstants, OperatorInfo}
 import org.apache.texera.amber.pybuilder.PythonTemplateBuilder
-@JsonSchemaInject(json = """
-{
-  "attributeTypeRules": {
-    "title": "string"
-  }
-}
-""")
+
+import javax.validation.constraints.NotNull
 class FunnelPlotOpDesc extends PythonOperatorDescriptor {
 
   @JsonProperty(required = true)
   @JsonSchemaTitle("X Column")
   @JsonPropertyDescription("Data column for the x-axis")
   @AutofillAttributeName
+  @NotNull(message = "X Column cannot be empty")
   var x: EncodableString = ""
 
   @JsonProperty(required = true)
   @JsonSchemaTitle("Y Column")
   @JsonPropertyDescription("Data column for the y-axis")
   @AutofillAttributeName
+  @NotNull(message = "Y Column cannot be empty")
   var y: EncodableString = ""
 
   @JsonProperty(required = false)
@@ -72,8 +69,8 @@ class FunnelPlotOpDesc extends PythonOperatorDescriptor {
     )
 
   private def createPlotlyFigure(): PythonTemplateBuilder = {
-    assert(x.nonEmpty)
-    assert(y.nonEmpty)
+    assert(x.nonEmpty, "X Column cannot be empty")
+    assert(y.nonEmpty, "Y Column cannot be empty")
     val colorArg = if (color.nonEmpty) pyb""", color=$color""" else ""
     pyb"""
          |        fig = go.Figure(px.funnel(table, x =$x, y = $y$colorArg))

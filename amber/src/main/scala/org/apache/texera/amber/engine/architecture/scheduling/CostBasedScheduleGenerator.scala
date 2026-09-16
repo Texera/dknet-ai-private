@@ -19,7 +19,7 @@
 
 package org.apache.texera.amber.engine.architecture.scheduling
 
-import org.apache.texera.amber.config.ApplicationConfig
+import org.apache.texera.common.config.ApplicationConfig
 import org.apache.texera.amber.core.storage.VFSURIFactory.createPortBaseURI
 import org.apache.texera.amber.core.virtualidentity.{ActorVirtualIdentity, PhysicalOpIdentity}
 import org.apache.texera.amber.core.workflow._
@@ -43,6 +43,23 @@ import scala.concurrent.{Await, Future}
 import scala.jdk.CollectionConverters._
 import scala.util.control.Breaks.{break, breakable}
 import scala.util.{Failure, Success, Try}
+
+object CostBasedScheduleGenerator {
+
+  /**
+    * The execution mode to schedule under: MATERIALIZED when any operator in
+    * `physicalPlan` requires it (e.g. the loop operators, whose back-edge is a
+    * cross-region materialized state channel), otherwise the requested mode.
+    */
+  private[scheduling] def effectiveExecutionMode(
+      physicalPlan: PhysicalPlan,
+      requestedMode: ExecutionMode
+  ): ExecutionMode =
+    if (physicalPlan.operators.exists(_.requiresMaterializedExecution))
+      ExecutionMode.MATERIALIZED
+    else
+      requestedMode
+}
 
 class CostBasedScheduleGenerator(
     workflowContext: WorkflowContext,
@@ -230,7 +247,8 @@ class CostBasedScheduleGenerator(
                 createPortBaseURI(
                   workflowId = workflowContext.workflowId,
                   executionId = workflowContext.executionId,
-                  globalPortId = gpid
+                  globalPortId = gpid,
+                  warehouse = workflowContext.warehouse
                 )
               )
             )
@@ -375,7 +393,22 @@ class CostBasedScheduleGenerator(
     */
   private def createRegionDAG(): DirectedAcyclicGraph[Region, RegionLink] = {
     val searchResultFuture: Future[SearchResult] = Future {
-      workflowContext.workflowSettings.executionMode match {
+      val requestedMode = workflowContext.workflowSettings.executionMode
+      val effectiveMode =
+        CostBasedScheduleGenerator.effectiveExecutionMode(physicalPlan, requestedMode)
+      if (effectiveMode != requestedMode) {
+        // Surface the silent coercion: the user asked for one mode but an
+        // operator (e.g. a loop) forces materialized scheduling.
+        val requiringOps = physicalPlan.operators
+          .filter(_.requiresMaterializedExecution)
+          .map(_.id.logicalOpId.id)
+        logger.warn(
+          s"WID: ${workflowContext.workflowId.id}, EID: ${workflowContext.executionId.id}, " +
+            s"overriding requested execution mode $requestedMode with $effectiveMode: " +
+            s"operator(s) ${requiringOps.toSeq.sorted.mkString(", ")} require materialized execution."
+        )
+      }
+      effectiveMode match {
         case ExecutionMode.MATERIALIZED =>
           getFullyMaterializedSearchState
         case ExecutionMode.PIPELINED =>

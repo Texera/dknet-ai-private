@@ -19,8 +19,11 @@
 
 package org.apache.texera.amber.core.storage
 
-import org.apache.texera.amber.config.StorageConfig
-import org.apache.texera.amber.core.storage.FileResolver.DATASET_FILE_URI_SCHEME
+import org.apache.texera.common.config.StorageConfig
+import org.apache.texera.amber.core.storage.FileResolver.{
+  DATASET_FILE_URI_SCHEME,
+  MODEL_FILE_URI_SCHEME
+}
 import org.apache.texera.amber.core.storage.VFSResourceType._
 import org.apache.texera.amber.core.storage.VFSURIFactory.{VFS_FILE_URI_SCHEME, decodeURI}
 import org.apache.texera.amber.core.storage.model._
@@ -38,7 +41,7 @@ object DocumentFactory {
   val ICEBERG = "iceberg"
 
   private def sanitizeURIPath(uri: URI): String =
-    uri.getPath.stripPrefix("/").replace("/", "_")
+    uri.getPath.stripPrefix("/").replaceFirst("^wh/[^/]+/", "").replace("/", "_")
 
   private def resolveNamespace(resourceType: VFSResourceType.Value): String =
     resourceType match {
@@ -60,14 +63,40 @@ object DocumentFactory {
       isDirectory: Boolean = false
   ): ReadonlyVirtualDocument[_] = {
     fileUri.getScheme match {
-      case DATASET_FILE_URI_SCHEME => new DatasetFileDocument(fileUri, isDirectory)
-      case "file"                  => new ReadonlyLocalFileDocument(fileUri)
+      case DATASET_FILE_URI_SCHEME =>
+        new LakeFSFileDocument(fileUri, ResourceType.Dataset, isDirectory)
+      case MODEL_FILE_URI_SCHEME => new LakeFSFileDocument(fileUri, ResourceType.Model)
+      case "file"                => new ReadonlyLocalFileDocument(fileUri)
       case unsupportedScheme =>
         throw new UnsupportedOperationException(
           s"Unsupported URI scheme: $unsupportedScheme for creating the ReadonlyDocument"
         )
     }
   }
+
+  /**
+    * The iceberg coordinates a VFS URI resolves to: which warehouse's catalog, which
+    * namespace, and which table (storage key). One resolver shared by every VFS entry
+    * point below, so the decode steps cannot drift apart (promised in #6944 review).
+    */
+  private case class IcebergLocation(
+      warehouse: Option[String],
+      namespace: String,
+      storageKey: String
+  )
+
+  private def resolveIcebergLocation(uri: URI): IcebergLocation = {
+    val components = decodeURI(uri)
+    IcebergLocation(
+      components.warehouse,
+      resolveNamespace(components.resourceType),
+      sanitizeURIPath(uri)
+    )
+  }
+
+  private val tupleSerde: (IcebergSchema, Tuple) => Record = IcebergUtil.toGenericRecord
+  private val tupleDeserde: (IcebergSchema, Record) => Tuple = (schema, record) =>
+    IcebergUtil.fromRecord(record, IcebergUtil.fromIcebergSchema(schema))
 
   /**
     * Create a document for storage specified by the uri.
@@ -79,28 +108,23 @@ object DocumentFactory {
   def createDocument(uri: URI, schema: Schema): VirtualDocument[_] = {
     uri.getScheme match {
       case VFS_FILE_URI_SCHEME =>
-        val (_, _, _, resourceType) = decodeURI(uri)
-        val storageKey = sanitizeURIPath(uri)
-        val namespace = resolveNamespace(resourceType)
+        val IcebergLocation(warehouse, namespace, storageKey) = resolveIcebergLocation(uri)
 
         val icebergSchema = IcebergUtil.toIcebergSchema(schema)
         IcebergUtil.createTable(
-          IcebergCatalogInstance.getInstance(),
+          IcebergCatalogInstance.getInstance(warehouse),
           namespace,
           storageKey,
           icebergSchema,
           overrideIfExists = true
         )
-        val serde: (IcebergSchema, Tuple) => Record = IcebergUtil.toGenericRecord
-        val deserde: (IcebergSchema, Record) => Tuple = (schema, record) =>
-          IcebergUtil.fromRecord(record, IcebergUtil.fromIcebergSchema(schema))
-
         new IcebergDocument[Tuple](
           namespace,
           storageKey,
           icebergSchema,
-          serde,
-          deserde
+          tupleSerde,
+          tupleDeserde,
+          warehouse
         )
       case unsupportedScheme =>
         throw new UnsupportedOperationException(
@@ -122,11 +146,9 @@ object DocumentFactory {
   def documentExists(uri: URI): Boolean = {
     uri.getScheme match {
       case VFS_FILE_URI_SCHEME =>
-        val (_, _, _, resourceType) = decodeURI(uri)
-        val storageKey = sanitizeURIPath(uri)
-        val namespace = resolveNamespace(resourceType)
+        val IcebergLocation(warehouse, namespace, storageKey) = resolveIcebergLocation(uri)
         IcebergCatalogInstance
-          .getInstance()
+          .getInstance(warehouse)
           .tableExists(TableIdentifier.of(namespace, storageKey))
 
       case unsupportedScheme =>
@@ -137,6 +159,28 @@ object DocumentFactory {
   }
 
   /**
+    * Return the document at `uri`: when `reuseExisting` is set and a document
+    * already exists there, open and return the existing one -- so a caller whose
+    * output accumulates across re-runs (e.g. a LoopEnd port whose region
+    * re-executes once per loop iteration) keeps the already-populated document
+    * instead of clobbering it, since `createDocument` overrides any existing
+    * document. Otherwise create it.
+    *
+    * `exists` / `open` / `create` default to this object's own `documentExists`
+    * / `openDocument` / `createDocument`; they are parameterized only so the
+    * create-or-reuse decision can be unit-tested without an iceberg backend.
+    */
+  def createOrReuseDocument(
+      uri: URI,
+      schema: Schema,
+      reuseExisting: Boolean,
+      exists: URI => Boolean = documentExists,
+      open: URI => VirtualDocument[_] = (u: URI) => openDocument(u)._1,
+      create: (URI, Schema) => VirtualDocument[_] = createDocument
+  ): VirtualDocument[_] =
+    if (reuseExisting && exists(uri)) open(uri) else create(uri, schema)
+
+  /**
     * Open a document specified by the uri.
     * If the document is storing structural data, the schema will also be returned
     * @param uri the uri of the document
@@ -144,15 +188,14 @@ object DocumentFactory {
     */
   def openDocument(uri: URI): (VirtualDocument[_], Option[Schema]) = {
     uri.getScheme match {
-      case DATASET_FILE_URI_SCHEME => (new DatasetFileDocument(uri), None)
+      case DATASET_FILE_URI_SCHEME => (new LakeFSFileDocument(uri, ResourceType.Dataset), None)
+      case MODEL_FILE_URI_SCHEME   => (new LakeFSFileDocument(uri, ResourceType.Model), None)
       case VFS_FILE_URI_SCHEME =>
-        val (_, _, _, resourceType) = decodeURI(uri)
-        val storageKey = sanitizeURIPath(uri)
-        val namespace = resolveNamespace(resourceType)
+        val IcebergLocation(warehouse, namespace, storageKey) = resolveIcebergLocation(uri)
 
         val table = IcebergUtil
           .loadTableMetadata(
-            IcebergCatalogInstance.getInstance(),
+            IcebergCatalogInstance.getInstance(warehouse),
             namespace,
             storageKey
           )
@@ -161,17 +204,14 @@ object DocumentFactory {
           )
 
         val amberSchema = IcebergUtil.fromIcebergSchema(table.schema())
-        val serde: (IcebergSchema, Tuple) => Record = IcebergUtil.toGenericRecord
-        val deserde: (IcebergSchema, Record) => Tuple = (schema, record) =>
-          IcebergUtil.fromRecord(record, IcebergUtil.fromIcebergSchema(schema))
-
         (
           new IcebergDocument[Tuple](
             namespace,
             storageKey,
             table.schema(),
-            serde,
-            deserde
+            tupleSerde,
+            tupleDeserde,
+            warehouse
           ),
           Some(amberSchema)
         )

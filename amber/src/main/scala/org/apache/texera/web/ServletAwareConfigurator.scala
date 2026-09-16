@@ -31,6 +31,7 @@ import java.nio.charset.Charset
 import javax.websocket.HandshakeResponse
 import javax.websocket.server.{HandshakeRequest, ServerEndpointConfig}
 import scala.jdk.CollectionConverters.{ListHasAsScala, _}
+import scala.util.chaining.scalaUtilChainingOps
 
 /**
   * This configurator extracts user identity from the HTTP handshake request
@@ -64,11 +65,14 @@ class ServletAwareConfigurator extends ServerEndpointConfig.Configurator with La
           s"User ID: $userId, User Name: $userName, User Email: $userEmail with CU Access: $cuAccess"
         )
 
-        val user = new User()
-        user.setUid(userId)
-        user.setName(userName)
-        user.setEmail(userEmail)
-        config.getUserProperties.put(classOf[User].getName, user)
+        config.getUserProperties.put(
+          classOf[User].getName,
+          new User().tap { user =>
+            user.setUid(userId)
+            user.setName(userName)
+            user.setEmail(userEmail)
+          }
+        )
         logger.debug(s"User created from headers: ID=$userId, Name=$userName")
       } else {
         // SINGLE NODE MODE: Construct the User object from JWT in query parameters.
@@ -84,11 +88,14 @@ class ServletAwareConfigurator extends ServerEndpointConfig.Configurator with La
           .get("access-token")
           .map(token => {
             val claims = jwtConsumer.process(token).getJwtClaims
-            val user = new User()
-            user.setUid(claims.getClaimValue("userId").asInstanceOf[Long].toInt)
-            user.setName(claims.getSubject)
-            user.setEmail(String.valueOf(claims.getClaimValue("email").asInstanceOf[String]))
-            config.getUserProperties.put(classOf[User].getName, user)
+            config.getUserProperties.put(
+              classOf[User].getName,
+              new User().tap { user =>
+                user.setUid(claims.getClaimValue("userId").asInstanceOf[Long].toInt)
+                user.setName(claims.getSubject)
+                user.setEmail(claims.getClaimValue("email").asInstanceOf[String])
+              }
+            )
           })
       }
     } catch {

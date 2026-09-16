@@ -22,11 +22,12 @@ import { RouterModule, Routes } from "@angular/router";
 import { DashboardComponent } from "./dashboard/component/dashboard.component";
 import { UserWorkflowComponent } from "./dashboard/component/user/user-workflow/user-workflow.component";
 import { UserQuotaComponent } from "./dashboard/component/user/user-quota/user-quota.component";
-import { UserProjectSectionComponent } from "./dashboard/component/user/user-project/user-project-section/user-project-section.component";
-import { UserProjectComponent } from "./dashboard/component/user/user-project/user-project.component";
 import { UserComputingUnitComponent } from "./dashboard/component/user/user-computing-unit/user-computing-unit.component";
+import { UserVenvComponent } from "./dashboard/component/user/user-venv/user-venv.component";
 import { WorkspaceComponent } from "./workspace/component/workspace.component";
+import { WorkflowFormComponent } from "./workspace/component/workflow-form/workflow-form.component";
 import { AboutComponent } from "./hub/component/about/about.component";
+import { TexeraLoginComponent } from "./hub/component/login/texera-login.component";
 import { AuthGuardService } from "./common/service/user/auth-guard.service";
 import { AdminUserComponent } from "./dashboard/component/admin/user/admin-user.component";
 import { AdminExecutionComponent } from "./dashboard/component/admin/execution/admin-execution.component";
@@ -34,16 +35,34 @@ import { AdminGuardService } from "./dashboard/service/admin/guard/admin-guard.s
 import { SearchComponent } from "./dashboard/component/user/search/search.component";
 import { ClusterComponent } from "./dashboard/component/user/cluster/cluster.component";
 import { FlarumComponent } from "./dashboard/component/user/flarum/flarum.component";
+import { FeedbackComponent } from "./dashboard/component/user/feedback/feedback.component";
 import { AdminGmailComponent } from "./dashboard/component/admin/gmail/admin-gmail.component";
 import { DatasetDetailComponent } from "./dashboard/component/user/user-dataset/user-dataset-explorer/dataset-detail.component";
 import { UserDatasetComponent } from "./dashboard/component/user/user-dataset/user-dataset.component";
+import { UserModelComponent } from "./dashboard/component/user/user-model/user-model.component";
+import { ModelDetailComponent } from "./dashboard/component/user/user-model/user-model-explorer/model-detail.component";
 import { HubWorkflowDetailComponent } from "./hub/component/workflow/detail/hub-workflow-detail.component";
 import { LandingPageComponent } from "./hub/component/landing-page/landing-page.component";
 import { USER_WORKFLOW } from "./app-routing.constant";
 import { HubSearchResultComponent } from "./hub/component/hub-search-result/hub-search-result.component";
+import { EntityType } from "./hub/service/hub.service";
 import { AdminSettingsComponent } from "./dashboard/component/admin/settings/admin-settings.component";
+import { OrcidCallbackComponent } from "./hub/component/login/orcid-callback.component";
 
 const routes: Routes = [];
+
+// Full-page login: a top-level route (sibling of the DashboardComponent shell) so it renders
+// in the root outlet without the navbar/sidebar chrome. The component itself redirects an
+// already-signed-in visitor away in ngOnInit.
+routes.push({
+  path: "login",
+  component: TexeraLoginComponent,
+});
+
+routes.push({
+  path: "callback",
+  children: [{ path: "orcid", component: OrcidCallbackComponent }],
+});
 
 routes.push({
   path: "",
@@ -71,6 +90,7 @@ routes.push({
             {
               path: "result",
               component: HubSearchResultComponent,
+              data: { entityType: EntityType.Workflow },
             },
             {
               path: "result/detail/:id",
@@ -84,10 +104,25 @@ routes.push({
             {
               path: "result",
               component: HubSearchResultComponent,
+              data: { entityType: EntityType.Dataset },
             },
             {
               path: "result/detail/:did",
               component: DatasetDetailComponent,
+            },
+          ],
+        },
+        {
+          path: "model",
+          children: [
+            {
+              path: "result",
+              component: HubSearchResultComponent,
+              data: { entityType: EntityType.Model },
+            },
+            {
+              path: "result/detail/:mid",
+              component: ModelDetailComponent,
             },
           ],
         },
@@ -98,16 +133,15 @@ routes.push({
       canActivate: [AuthGuardService],
       children: [
         {
-          path: "project",
-          component: UserProjectComponent,
-        },
-        {
-          path: "project/:pid",
-          component: UserProjectSectionComponent,
-        },
-        {
           path: "workflow",
           component: UserWorkflowComponent,
+        },
+        {
+          // Must precede "workflow/:id" so the trailing "form" segment is not swallowed by
+          // the canvas route. The page guards itself (the feature flag off, or a workflow
+          // that does not open in the form, hands back to the canvas).
+          path: "workflow/:id/form",
+          component: WorkflowFormComponent,
         },
         {
           path: "workflow/:id",
@@ -126,9 +160,21 @@ routes.push({
           component: DatasetDetailComponent,
         },
         {
+          path: "model",
+          component: UserModelComponent,
+        },
+        {
+          path: "model/:mid",
+          component: ModelDetailComponent,
+        },
+        {
           path: "compute",
           component: UserComputingUnitComponent,
 	},
+        {
+          path: "python-venv",
+          component: UserVenvComponent,
+        },
         {
           path: "quota",
           component: UserQuotaComponent,
@@ -140,6 +186,10 @@ routes.push({
         {
           path: "cluster",
           component: ClusterComponent,
+        },
+        {
+          path: "feedback",
+          component: FeedbackComponent,
         },
       ],
     },

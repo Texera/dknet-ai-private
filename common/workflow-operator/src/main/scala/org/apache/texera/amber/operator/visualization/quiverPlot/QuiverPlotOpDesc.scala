@@ -30,10 +30,21 @@ import org.apache.texera.amber.operator.metadata.annotations.AutofillAttributeNa
 import org.apache.texera.amber.operator.metadata.{OperatorGroupConstants, OperatorInfo}
 import org.apache.texera.amber.pybuilder.PythonTemplateBuilder
 
+import javax.validation.constraints.NotNull
+
 @JsonSchemaInject(json = """
 {
   "attributeTypeRules": {
-    "value": {
+    "x": {
+      "enum": ["integer", "long", "double"]
+    },
+    "y": {
+      "enum": ["integer", "long", "double"]
+    },
+    "u": {
+      "enum": ["integer", "long", "double"]
+    },
+    "v": {
       "enum": ["integer", "long", "double"]
     }
   }
@@ -46,22 +57,30 @@ class QuiverPlotOpDesc extends PythonOperatorDescriptor {
   @JsonProperty(value = "x", required = true)
   @JsonSchemaTitle("x")
   @JsonPropertyDescription("Column for the x-coordinate of the starting point")
-  @AutofillAttributeName var x: EncodableString = ""
+  @AutofillAttributeName
+  @NotNull(message = "x cannot be empty")
+  var x: EncodableString = ""
 
   @JsonProperty(value = "y", required = true)
   @JsonSchemaTitle("y")
   @JsonPropertyDescription("Column for the y-coordinate of the starting point")
-  @AutofillAttributeName var y: EncodableString = ""
+  @AutofillAttributeName
+  @NotNull(message = "y cannot be empty")
+  var y: EncodableString = ""
 
   @JsonProperty(value = "u", required = true)
   @JsonSchemaTitle("u")
   @JsonPropertyDescription("Column for the vector component in the x-direction")
-  @AutofillAttributeName var u: EncodableString = ""
+  @AutofillAttributeName
+  @NotNull(message = "u cannot be empty")
+  var u: EncodableString = ""
 
   @JsonProperty(value = "v", required = true)
   @JsonSchemaTitle("v")
   @JsonPropertyDescription("Column for the vector component in the y-direction")
-  @AutofillAttributeName var v: EncodableString = ""
+  @AutofillAttributeName
+  @NotNull(message = "v cannot be empty")
+  var v: EncodableString = ""
 
   override def getOutputSchemas(
       inputSchemas: Map[PortIdentity, Schema]

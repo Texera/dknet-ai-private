@@ -18,24 +18,62 @@
 name: texera-single-node-release-1-0-0
 services:
   # Part1: Specification of the storage services used by Texera
-  # MinIO is an S3-compatible object storage used to store datasets and files.
-  minio:
-    image: minio/minio:RELEASE.2025-02-28T09-55-16Z
-    container_name: texera-minio
+  # RustFS is an S3-compatible object storage used to store datasets and files.
+  rustfs:
+    image: rustfs/rustfs:1.0.0-rc.6
+    container_name: texera-rustfs
     ports:
-      - "9000:9000"
+      - "${RUSTFS_PORT:-9000}:9000"
     env_file:
       - .env
+    environment:
+      - RUSTFS_ACCESS_KEY=${STORAGE_S3_AUTH_USERNAME}
+      - RUSTFS_SECRET_KEY=${STORAGE_S3_AUTH_PASSWORD}
+      # Must match STORAGE_S3_REGION: the region is part of the SigV4 scope, and
+      # LakeFS sends its blockstore region on every request.
+      - RUSTFS_REGION=${STORAGE_S3_REGION}
+      - RUSTFS_CONSOLE_ENABLE=true
+      - RUSTFS_CONSOLE_ADDRESS=0.0.0.0:9001
+      # Empty log directory => log to stdout, so `docker compose logs rustfs`
+      # works and no second volume is needed. `warn` keeps that readable; the
+      # server is very chatty at info.
+      - RUSTFS_OBS_LOG_DIRECTORY=
+      - RUSTFS_OBS_LOGGER_LEVEL=warn
     volumes:
-      - minio_data:/data
-    command: server --console-address ":9001" /data
+      - rustfs_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:9000/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # This job creates the S3 bucket used by the Iceberg warehouse that the
+  # Lakekeeper service manages. `rc` is RustFS's S3 client, the counterpart of
+  # the `mc` client this used to run.
+  rustfs-init:
+    image: rustfs/rc:v0.1.35
+    container_name: texera-rustfs-init
+    depends_on:
+      rustfs:
+        condition: service_healthy
+    env_file:
+      - .env
+    restart: "no"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        rc alias set local "$$STORAGE_S3_ENDPOINT" "$$STORAGE_S3_AUTH_USERNAME" "$$STORAGE_S3_AUTH_PASSWORD" \
+          --region "$$STORAGE_S3_REGION" --bucket-lookup path
+        rc bucket create --ignore-existing "local/$$STORAGE_ICEBERG_CATALOG_REST_S3_BUCKET"
+        echo "RustFS bucket '$$STORAGE_ICEBERG_CATALOG_REST_S3_BUCKET' is ready."
 
   # PostgreSQL with PGroonga extension for full-text search.
   # Used by lakeFS and Texera's metadata storage.
   postgres:
     image: groonga/pgroonga:4.0.1-debian-15
     container_name: texera-postgres
-    restart: always
+    restart: unless-stopped
     env_file:
       - .env
     healthcheck:
@@ -52,17 +90,19 @@ services:
   lakefs:
     image: treeverse/lakefs:1.51
     container_name: texera-lakefs
-    restart: always
+    restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy
-      minio:
+      rustfs:
         condition: service_started
     env_file:
       - .env
     environment:
-      # This port also need to be changed if the port of MinIO service is changed
-      - LAKEFS_BLOCKSTORE_S3_PRE_SIGNED_ENDPOINT=${TEXERA_HOST}:9000
+      # This port also need to be changed if the port of RustFS service is changed
+      - LAKEFS_BLOCKSTORE_S3_PRE_SIGNED_ENDPOINT=${TEXERA_HOST}:${RUSTFS_PORT:-9000}
+      - LAKEFS_BLOCKSTORE_S3_CREDENTIALS_ACCESS_KEY_ID=${STORAGE_S3_AUTH_USERNAME}
+      - LAKEFS_BLOCKSTORE_S3_CREDENTIALS_SECRET_ACCESS_KEY=${STORAGE_S3_AUTH_PASSWORD}
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
@@ -75,14 +115,217 @@ services:
       timeout: 5s
       retries: 10
 
+  # This job applies Lakekeeper's database schema to the Postgres instance —
+  # creating or upgrading the tables that Lakekeeper uses to track its catalog metadata.
+  lakekeeper-migrate:
+    image: vakamo/lakekeeper:v0.11.0
+    container_name: texera-lakekeeper-migrate
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - .env
+    restart: "no"
+    entrypoint: ["/home/nonroot/lakekeeper"]
+    command: ["migrate"]
+
+  # Lakekeeper is the Iceberg REST catalog service
+  lakekeeper:
+    image: vakamo/lakekeeper:v0.11.0
+    container_name: texera-lakekeeper
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rustfs:
+        condition: service_started
+      lakekeeper-migrate:
+        condition: service_completed_successfully
+    env_file:
+      - .env
+    entrypoint: ["/home/nonroot/lakekeeper"]
+    command: ["serve"]
+    healthcheck:
+      test: ["CMD", "/home/nonroot/lakekeeper", "healthcheck"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  # One-shot init container that creates the Lakekeeper default project and
+  # the Iceberg warehouse pointing at the RustFS bucket prepared by rustfs-init.
+  lakekeeper-init:
+    image: alpine:3.19
+    container_name: texera-lakekeeper-init
+    depends_on:
+      lakekeeper:
+        condition: service_healthy
+      rustfs-init:
+        condition: service_completed_successfully
+    env_file:
+      - .env
+    restart: "no"
+    entrypoint: [ "/bin/sh", "-c" ]
+    command:
+      - |
+        set -e
+
+        echo "Installing curl (to call Lakekeeper's management API) and jq (to parse its list responses)..."
+        apk add --no-cache curl jq
+
+        # Lakekeeper organizes warehouses under "projects" (its top-level tenant
+        # abstraction). Texera is single-tenant, so we use the NIL UUID (all
+        # zeros) as the project ID — with LAKEKEEPER__ENABLE_DEFAULT_PROJECT=true
+        # (Lakekeeper's default), this is the project that any client request
+        # without a project-id is routed to.
+        echo "Step 1: Ensuring Lakekeeper's default project exists (top-level tenant that will hold the Iceberg warehouse)..."
+
+        echo "Checking whether Lakekeeper's default project already exists..."
+        PROJECT_GET_CODE=$$(curl -s -o /tmp/project.txt -w "%{http_code}" \
+            "$$LAKEKEEPER_BASE_URI/management/v1/project" || echo "000")
+
+        if [ "$$PROJECT_GET_CODE" = "200" ]; then
+          echo "Lakekeeper's default project already exists. Skipping creation."
+        elif [ "$$PROJECT_GET_CODE" = "404" ]; then
+          echo "Default project not found. Creating..."
+          PROJECT_PAYLOAD='{"project-id": "00000000-0000-0000-0000-000000000000", "project-name": "default"}'
+
+          PROJECT_CODE=$$(curl -s -o /tmp/response.txt -w "%{http_code}" \
+              -X POST \
+              -H "Content-Type: application/json" \
+              -d "$$PROJECT_PAYLOAD" \
+              "$$LAKEKEEPER_BASE_URI/management/v1/project" || echo "000")
+
+          if [ "$$PROJECT_CODE" -lt 200 ] || [ "$$PROJECT_CODE" -ge 300 ]; then
+            echo "Failed to create Lakekeeper's default project. HTTP Code: $$PROJECT_CODE"
+            echo "ERROR RESPONSE:"
+            if [ -f /tmp/response.txt ]; then cat /tmp/response.txt; fi
+            echo ""
+            exit 1
+          fi
+          echo "Created Lakekeeper's default project successfully (HTTP $$PROJECT_CODE)."
+        else
+          echo "Failed to check Lakekeeper's default project. HTTP Code: $$PROJECT_GET_CODE"
+          echo "ERROR RESPONSE:"
+          if [ -f /tmp/project.txt ]; then cat /tmp/project.txt; fi
+          echo ""
+          exit 1
+        fi
+
+
+        echo "Step 2: Ensuring Warehouse '$$STORAGE_ICEBERG_CATALOG_REST_WAREHOUSE_NAME' exists..."
+
+        # Detect existing warehouse first so we only POST when it's actually
+        # missing — keeps this init idempotent across re-runs. 
+        echo "Checking whether Lakekeeper Warehouse '$$STORAGE_ICEBERG_CATALOG_REST_WAREHOUSE_NAME' already exists..."
+        WAREHOUSE_LIST_CODE=$$(curl -s -o /tmp/warehouses.txt -w "%{http_code}" \
+            "$$LAKEKEEPER_BASE_URI/management/v1/warehouse" || echo "000")
+
+        if [ "$$WAREHOUSE_LIST_CODE" -lt 200 ] || [ "$$WAREHOUSE_LIST_CODE" -ge 300 ]; then
+          echo "Failed to list Lakekeeper warehouses. HTTP Code: $$WAREHOUSE_LIST_CODE"
+          echo "ERROR RESPONSE:"
+          if [ -f /tmp/warehouses.txt ]; then cat /tmp/warehouses.txt; fi
+          echo ""
+          exit 1
+        fi
+
+        if jq -e --arg name "$$STORAGE_ICEBERG_CATALOG_REST_WAREHOUSE_NAME" '.warehouses[]? | select(.name == $$name)' /tmp/warehouses.txt >/dev/null; then
+          # The warehouse persists its S3 endpoint in Lakekeeper's own DB. The
+          # local-dev launcher sets STORAGE_S3_ENDPOINT to the host LAN IP so
+          # both this container and the host JVMs (Iceberg remote-signing) reach
+          # the same RustFS — but that IP changes across networks / DHCP leases.
+          # This init is idempotent and would otherwise just skip, leaving a
+          # stale endpoint that breaks workflow execution with an opaque Iceberg
+          # RESTException. Refresh the stored endpoint on every run (#6195).
+          echo "Lakekeeper Warehouse '$$STORAGE_ICEBERG_CATALOG_REST_WAREHOUSE_NAME' already exists. Refreshing its storage endpoint to '$$STORAGE_S3_ENDPOINT'..."
+          WAREHOUSE_ID=$$(jq -r --arg name "$$STORAGE_ICEBERG_CATALOG_REST_WAREHOUSE_NAME" '.warehouses[]? | select(.name == $$name) | .id' /tmp/warehouses.txt)
+
+          # The key prefix and the region are both immutable: Lakekeeper rejects
+          # the whole payload when either would change, taking the endpoint with
+          # it. Reuse the profile the warehouse already holds and override only
+          # the endpoint, so no other field can drift out of the stored record.
+          REFRESHED_PROFILE=$$(jq -c --arg name "$$STORAGE_ICEBERG_CATALOG_REST_WAREHOUSE_NAME" --arg endpoint "$$STORAGE_S3_ENDPOINT" '.warehouses[]? | select(.name == $$name) | ."storage-profile" | .endpoint = $$endpoint' /tmp/warehouses.txt)
+
+          UPDATE_PAYLOAD=$$(cat <<EOF
+        {
+          "storage-profile": $$REFRESHED_PROFILE,
+          "storage-credential": {
+            "type": "s3",
+            "credential-type": "access-key",
+            "aws-access-key-id": "$$STORAGE_S3_AUTH_USERNAME",
+            "aws-secret-access-key": "$$STORAGE_S3_AUTH_PASSWORD"
+          }
+        }
+        EOF
+          )
+
+          UPDATE_CODE=$$(curl -s -o /tmp/response.txt -w "%{http_code}" \
+              -X POST \
+              -H "Content-Type: application/json" \
+              -d "$$UPDATE_PAYLOAD" \
+              "$$LAKEKEEPER_BASE_URI/management/v1/warehouse/$$WAREHOUSE_ID/storage" || echo "000")
+
+          if [ "$$UPDATE_CODE" -lt 200 ] || [ "$$UPDATE_CODE" -ge 300 ]; then
+            echo "Failed to refresh Lakekeeper Warehouse storage. HTTP Code: $$UPDATE_CODE"
+            echo "ERROR RESPONSE:"
+            if [ -f /tmp/response.txt ]; then cat /tmp/response.txt; fi
+            echo ""
+            exit 1
+          fi
+          echo "Refreshed Lakekeeper Warehouse storage endpoint successfully (HTTP $$UPDATE_CODE)."
+        else
+          echo "Warehouse not found. Creating '$$STORAGE_ICEBERG_CATALOG_REST_WAREHOUSE_NAME'..."
+          CREATE_PAYLOAD=$$(cat <<EOF
+        {
+          "warehouse-name": "$$STORAGE_ICEBERG_CATALOG_REST_WAREHOUSE_NAME",
+          "project-id": "00000000-0000-0000-0000-000000000000",
+          "storage-profile": {
+            "type": "s3",
+            "bucket": "$$STORAGE_ICEBERG_CATALOG_REST_S3_BUCKET",
+            "key-prefix": "$$STORAGE_ICEBERG_CATALOG_REST_KEY_PREFIX",
+            "region": "$$STORAGE_S3_REGION",
+            "endpoint": "$$STORAGE_S3_ENDPOINT",
+            "flavor": "s3-compat",
+            "path-style-access": true,
+            "sts-enabled": false
+          },
+          "storage-credential": {
+            "type": "s3",
+            "credential-type": "access-key",
+            "aws-access-key-id": "$$STORAGE_S3_AUTH_USERNAME",
+            "aws-secret-access-key": "$$STORAGE_S3_AUTH_PASSWORD"
+          }
+        }
+        EOF
+          )
+
+          WAREHOUSE_CODE=$$(curl -s -o /tmp/response.txt -w "%{http_code}" \
+              -X POST \
+              -H "Content-Type: application/json" \
+              -d "$$CREATE_PAYLOAD" \
+              "$$LAKEKEEPER_BASE_URI/management/v1/warehouse" || echo "000")
+
+          if [ "$$WAREHOUSE_CODE" -lt 200 ] || [ "$$WAREHOUSE_CODE" -ge 300 ]; then
+            echo "Failed to create Lakekeeper Warehouse. HTTP Code: $$WAREHOUSE_CODE"
+            echo "ERROR RESPONSE:"
+            if [ -f /tmp/response.txt ]; then cat /tmp/response.txt; fi
+            echo ""
+            exit 1
+          fi
+          echo "Created Lakekeeper Warehouse successfully (HTTP $$WAREHOUSE_CODE)."
+        fi
+
+        echo "Initialization sequence completed successfully!"
+
+
   # Part2: Specification of Texera's micro-services
   # FileService provides endpoints for Texera's dataset management
   file-service:
-    image: bobbai2000/texera-file-service:agent-service
-    container_name: texera-file-service
-    restart: always
+    image: ${IMAGE_REGISTRY:-ghcr.io/apache}/texera-file-service:${IMAGE_TAG:-latest}
+    container_name: file-service
+    restart: unless-stopped
     depends_on:
-      minio:
+      rustfs:
         condition: service_started
       lakefs:
         condition: service_healthy
@@ -94,11 +337,59 @@ services:
       timeout: 3s
       retries: 10
 
+  # ConfigService provides endpoints for configuration management
+  config-service:
+    image: ${IMAGE_REGISTRY:-ghcr.io/apache}/texera-config-service:${IMAGE_TAG:-latest}
+    container_name: config-service
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - .env
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:9094/api/healthcheck"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # AccessControlService handles user permissions and proxies LLM API traffic
+  access-control-service:
+    image: ${IMAGE_REGISTRY:-ghcr.io/apache}/texera-access-control-service:${IMAGE_TAG:-latest}
+    container_name: access-control-service
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - .env
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:9096/api/healthcheck"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # WorkflowComputingUnitManagingService provides endpoints for managing computing units
+  workflow-computing-unit-managing-service:
+    image: ${IMAGE_REGISTRY:-ghcr.io/apache}/texera-workflow-computing-unit-managing-service:${IMAGE_TAG:-latest}
+    container_name: workflow-computing-unit-managing-service
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - .env
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8888/api/healthcheck"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
   # WorkflowCompilingService provides endpoints for sanity check and schema propagation while workflows are being edited
   workflow-compiling-service:
-    image: bobbai2000/texera-workflow-compiling-service:agent-service
-    container_name: texera-workflow-compiling-service
-    restart: always
+    image: ${IMAGE_REGISTRY:-ghcr.io/apache}/texera-workflow-compiling-service:${IMAGE_TAG:-latest}
+    container_name: workflow-compiling-service
+    restart: unless-stopped
     depends_on:
       file-service:
         condition: service_started
@@ -110,12 +401,11 @@ services:
       timeout: 3s
       retries: 10
 
-  # ComputingUnitMaster provides endpoints for executing workflows and interactions during executions.
-  computing-unit-master:
-    # to enable R operators, change the image tag to single-node-release-1-0-0-R
-    image: bobbai2000/texera-workflow-execution-coordinator:agent-service
-    container_name: texera-computing-unit-master
-    restart: always
+  # WorkflowRuntimeCoordinatorService provides endpoints for executing workflows and interactions during executions.
+  workflow-runtime-coordinator-service:
+    image: ${IMAGE_REGISTRY:-ghcr.io/apache}/texera-workflow-execution-coordinator:${IMAGE_TAG:-latest}
+    container_name: workflow-runtime-coordinator-service
+    restart: unless-stopped
     depends_on:
       workflow-compiling-service:
         condition: service_started
@@ -126,11 +416,11 @@ services:
       - ./shared-data:/data
       - ./application.ini:/texera/amber/conf/application.ini:ro
 
-  # TexeraWebApplication provides endpoints for hub resource management.
-  texera-web-application:
-    image: bobbai2000/texera-dashboard-service:agent-service
-    container_name: texera-web-application
-    restart: always
+  # DashboardService provides endpoints for community resource (e.g. workflows, users) management
+  dashboard-service:
+    image: ${IMAGE_REGISTRY:-ghcr.io/apache}/texera-dashboard-service:${IMAGE_TAG:-latest}
+    container_name: dashboard-service
+    restart: unless-stopped
     depends_on:
       computing-unit-master:
         condition: service_started
@@ -148,11 +438,39 @@ services:
       timeout: 3s
       retries: 10
 
-  # ComputingUnitManagingService provides endpoints for managing computing units.
-  computing-unit-managing-service:
-    image: bobbai2000/texera-workflow-computing-unit-managing-service:agent-service
-    container_name: texera-computing-unit-managing-service
-    restart: always
+  # LLM API proxy for different providers
+  litellm:
+    image: ghcr.io/berriai/litellm:v1.83.10-stable
+    container_name: litellm
+    restart: unless-stopped
+    # Keys read from shell first, falling back to .env.
+    environment:
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-}
+    volumes:
+      - ./litellm-config.yaml:/app/config.yaml:ro
+    command: ["--config", "/app/config.yaml", "--port", "4000", "--host", "0.0.0.0"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:4000/health/liveliness').read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+  # AgentService manages the texera agents' interal states, and provide endpoints for CRUD agents
+  agent-service:
+    image: ${IMAGE_REGISTRY:-ghcr.io/apache}/texera-agent-service:${IMAGE_TAG:-latest}
+    container_name: agent-service
+    restart: unless-stopped
+    depends_on:
+      dashboard-service:
+        condition: service_healthy
+      workflow-compiling-service:
+        condition: service_healthy
+      workflow-runtime-coordinator-service:
+        condition: service_started
     env_file:
       - .env
     healthcheck:
@@ -161,61 +479,52 @@ services:
       timeout: 3s
       retries: 10
 
-  # ConfigService provides GUI configuration and feature flags to the frontend.
-  config-service:
-    image: bobbai2000/texera-config-service:agent-service
-    container_name: texera-config-service
-    restart: always
+  # NotebookMigrationService provides endpoints for the Jupyter notebook migration tool
+  notebook-migration-service:
+    image: ${IMAGE_REGISTRY:-ghcr.io/apache}/texera-notebook-migration-service:${IMAGE_TAG:-latest}
+    container_name: notebook-migration-service
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
     env_file:
       - .env
+    environment:
+      # Interpolation only works in the compose file, not inside .env, so the
+      # browser-facing URL is composed here (same as lakefs's pre-signed endpoint).
+      - STORAGE_JUPYTER_PUBLIC_URL=${TEXERA_HOST}:${JUPYTER_PORT:-9100}
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:9094/api/config/gui"]
+      test: ["CMD", "curl", "-sf", "http://localhost:9098/api/healthcheck"]
       interval: 5s
       timeout: 3s
       retries: 10
 
-  # Part 2.5: AI Copilot / Agent services
-  # LiteLLM provides a unified LLM gateway that proxies requests to various LLM providers.
-  # Models are configured in litellm-config.yaml; API keys come from host environment.
-  litellm:
-    image: ghcr.io/berriai/litellm:main-latest
-    container_name: texera-litellm
-    restart: always
-    env_file:
-      - .env
+  # JupyterLab instance that the notebook migration tool embeds in an iframe.
+  # Its port is published because the browser loads it directly, not through nginx
+  # (STORAGE_JUPYTER_PUBLIC_URL); notebook-migration-service reaches it in-network
+  # via STORAGE_JUPYTER_INTERNAL_URL.
+  jupyter:
+    image: ${IMAGE_REGISTRY:-ghcr.io/apache}/texera-jupyter:${IMAGE_TAG:-latest}
+    container_name: texera-jupyter
+    restart: unless-stopped
+    ports:
+      - "${JUPYTER_PORT:-9100}:8888"
+    # No env_file here on purpose. Users run arbitrary code in Jupyter, so this
+    # container gets only the two values it needs, not the whole .env (which holds
+    # the DB, S3, LakeFS, and LiteLLM credentials). It also keeps JUPYTER_PORT out:
+    # the base image reads it and would move the server off 8888.
     environment:
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
-      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
-      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
-    volumes:
-      - ./litellm-config.yaml:/app/config.yaml:ro
-    command: ["--config", "/app/config.yaml", "--port", "4000"]
+      # Texera app origin for the iframe CSP frame-ancestors and custom.js postMessage checks.
+      - TEXERA_ORIGIN=${TEXERA_HOST}:${TEXERA_PORT:-8080}
+      - JUPYTER_TOKEN=${JUPYTER_TOKEN:-texera}
     healthcheck:
-      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:4000/health/liveliness')\""]
+      # /api returns the server version without requiring the token, so it is a
+      # reliable liveness probe even with auth enabled.
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8888/api')"]
       interval: 10s
       timeout: 5s
-      retries: 10
-
-  # AgentService provides AI-powered workflow manipulation via LLM agents.
-  agent-service:
-    image: bobbai2000/texera-agent-service:agent-service
-    container_name: texera-agent-service
-    restart: always
-    depends_on:
-      texera-web-application:
-        condition: service_healthy
-      litellm:
-        condition: service_started
-    environment:
-      - PORT=3001
-      - API_ENDPOINT=http://texera-web-application:8080
-      - OPERATOR_METADATA_ENDPOINT=http://texera-web-application:8080
-      - MODELS_ENDPOINT=http://texera-nginx:8080
-      - COMPILE_ENDPOINT=http://texera-workflow-compiling-service:9090
-      - WS_ENDPOINT=ws://texera-computing-unit-master:8085
-      - EXECUTION_ENDPOINT=http://texera-computing-unit-master:8085
-      - DATASET_ENDPOINT=http://texera-file-service:9092
-      - LLM_API_KEY=dummy
+      retries: 5
+      start_period: 15s
 
   # Part 3: reverse proxy service for Texera's micro services
   nginx:
@@ -230,6 +539,7 @@ services:
       - config-service
       - litellm
       - agent-service
+      - notebook-migration-service
     volumes:
       - ./nginx.conf:/etc/nginx/nginx.conf:ro
     ports:
@@ -241,6 +551,6 @@ networks:
 
 # persistent volumes
 volumes:
-  minio_data:
+  rustfs_data:
   postgres_data:
   workflow_result_data:

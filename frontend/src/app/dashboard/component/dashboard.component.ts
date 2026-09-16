@@ -25,7 +25,6 @@ import { FlarumService } from "../service/user/flarum/flarum.service";
 import { HttpErrorResponse } from "@angular/common/http";
 import { ActivatedRoute, NavigationEnd, Router } from "@angular/router";
 import { HubComponent } from "../../hub/component/hub.component";
-import { SocialAuthService } from "@abacritt/angularx-social-login";
 import { AdminSettingsService } from "../service/admin/settings/admin-settings.service";
 import { GuiConfigService } from "../../common/service/gui-config.service";
 
@@ -37,13 +36,17 @@ import {
   ADMIN_USER,
   USER_COMPUTING_UNIT,
   USER_DATASET,
+  USER_MODEL,
   USER_DISCUSSION,
-  USER_PROJECT,
+  USER_PYTHON_VENV,
   USER_QUOTA,
   USER_WORKFLOW,
+  USER_FEEDBACK,
+  LOGIN,
 } from "../../app-routing.constant";
 import { Version } from "../../../environments/version";
 import { SidebarTabs } from "../../common/type/gui-config";
+import { MODEL_ICON } from "../../common/icon/model-icon";
 
 @Component({
   standalone: false,
@@ -64,16 +67,21 @@ export class DashboardComponent implements OnInit {
   showLinks: boolean = false;
   logo: string = "";
   miniLogo: string = "";
+  // Every tab starts hidden; loadTabs turns on the ones /config/settings/public
+  // reports as enabled. The frontend keeps no copy of the default.conf gui.tabs
+  // defaults, so an unfetched or failed load shows no tabs (each *ngIf sees
+  // false) rather than a guessed set — the backend stays the single source.
   sidebarTabs: SidebarTabs = {
     hub_enabled: false,
     home_enabled: false,
     workflow_enabled: false,
     dataset_enabled: false,
+    model_enabled: false,
     your_work_enabled: false,
-    projects_enabled: false,
     workflows_enabled: false,
     datasets_enabled: false,
     cluster_enabled: false,
+    models_enabled: false,
     compute_enabled: false,
     quota_enabled: false,
     forum_enabled: false,
@@ -84,12 +92,16 @@ export class DashboardComponent implements OnInit {
   affiliationInput: string = "";
   affiliationSaving = false;
 
-  protected readonly USER_PROJECT = USER_PROJECT;
+  protected readonly LOGIN = LOGIN;
   protected readonly USER_WORKFLOW = USER_WORKFLOW;
   protected readonly USER_DATASET = USER_DATASET;
+  protected readonly USER_MODEL = USER_MODEL;
+  protected readonly MODEL_ICON = MODEL_ICON;
   protected readonly USER_COMPUTING_UNIT = USER_COMPUTING_UNIT;
+  protected readonly USER_PYTHON_VENV = USER_PYTHON_VENV;
   protected readonly USER_QUOTA = USER_QUOTA;
   protected readonly USER_DISCUSSION = USER_DISCUSSION;
+  protected readonly USER_FEEDBACK = USER_FEEDBACK;
   protected readonly ADMIN_USER = ADMIN_USER;
   protected readonly ADMIN_GMAIL = ADMIN_GMAIL;
   protected readonly ADMIN_EXECUTION = ADMIN_EXECUTION;
@@ -101,7 +113,6 @@ export class DashboardComponent implements OnInit {
     private flarumService: FlarumService,
     private cdr: ChangeDetectorRef,
     private ngZone: NgZone,
-    private socialAuthService: SocialAuthService,
     private route: ActivatedRoute,
     private adminSettingsService: AdminSettingsService,
     protected config: GuiConfigService
@@ -134,51 +145,63 @@ export class DashboardComponent implements OnInit {
         });
       });
 
-    this.socialAuthService.authState.pipe(untilDestroyed(this)).subscribe(user => {
-      this.userService
-        .googleLogin(user.idToken)
-        .pipe(untilDestroyed(this))
-        .subscribe(() => {
-          this.ngZone.run(() => {
-            this.router.navigateByUrl(this.route.snapshot.queryParams["returnUrl"] || USER_WORKFLOW);
-          });
-        });
-    });
-
     this.loadLogos();
 
     this.loadTabs();
   }
 
+  // A missing key or a failed settings fetch keeps the branding/tab defaults;
+  // the error callbacks stop a single failed shared request from surfacing as
+  // one unhandled RxJS error per subscription.
   loadLogos(): void {
     this.adminSettingsService
-      .getSetting("logo")
+      .getPublicSetting("logo")
       .pipe(untilDestroyed(this))
-      .subscribe(dataUri => {
-        this.logo = dataUri;
+      .subscribe({
+        next: dataUri => {
+          if (dataUri) {
+            this.logo = dataUri;
+          }
+        },
+        error: () => {},
       });
 
     this.adminSettingsService
-      .getSetting("mini_logo")
+      .getPublicSetting("mini_logo")
       .pipe(untilDestroyed(this))
-      .subscribe(dataUri => {
-        this.miniLogo = dataUri;
+      .subscribe({
+        next: dataUri => {
+          if (dataUri) {
+            this.miniLogo = dataUri;
+          }
+        },
+        error: () => {},
       });
 
     this.adminSettingsService
-      .getSetting("favicon")
+      .getPublicSetting("favicon")
       .pipe(untilDestroyed(this))
-      .subscribe(dataUri => {
-        document.querySelectorAll("link[rel*='icon']").forEach(el => ((el as HTMLLinkElement).href = dataUri));
+      .subscribe({
+        next: dataUri => {
+          if (dataUri) {
+            document.querySelectorAll("link[rel*='icon']").forEach(el => ((el as HTMLLinkElement).href = dataUri));
+          }
+        },
+        error: () => {},
       });
   }
 
   loadTabs(): void {
     (Object.keys(this.sidebarTabs) as (keyof SidebarTabs)[]).forEach(tab => {
       this.adminSettingsService
-        .getSetting(tab)
+        .getPublicSetting(tab)
         .pipe(untilDestroyed(this))
-        .subscribe(value => (this.sidebarTabs[tab] = value === "true"));
+        .subscribe({
+          next: value => {
+            this.sidebarTabs[tab] = value === "true";
+          },
+          error: () => {},
+        });
     });
   }
 

@@ -24,16 +24,37 @@ from proto.org.apache.texera.amber.core import (
     ActorVirtualIdentity,
 )
 
-worker_name_pattern = re.compile(r"Worker:WF\d+-.+-(\w+)-(\d+)")
+worker_name_pattern = re.compile(r"Worker:WF(\d+)-(.+)-(\w+)-(\d+)")
 
 MATERIALIZATION_READER_ACTOR_PREFIX = "MATERIALIZATION_READER_"
 
 
 def get_worker_index(worker_id: str) -> int:
-    match = worker_name_pattern.match(worker_id)
+    match = worker_name_pattern.fullmatch(worker_id)
     if match:
-        return int(match.group(2))
-    raise ValueError("Invalid worker ID format")
+        return int(match.group(4))
+    raise ValueError(f"Invalid worker ID format: {worker_id}")
+
+
+def get_logical_op_id(worker_id: str) -> str:
+    """
+    Extract the logical operator id from a worker actor name of the form
+    ``Worker:WF<workflowId>-<operatorId>-<layerName>-<workerIndex>``.
+
+    Returns the logical operator id only (the ``<operatorId>`` segment); the
+    physical operator id additionally carries the ``<layerName>``. Name
+    parallels Scala ``VirtualIdentityUtils.getLogicalOpId`` so the logical /
+    physical distinction is visible at every call site (the matching Scala
+    physical-id accessor is ``getPhysicalOpId``).
+
+    Unlike the Scala sibling (which returns a ``__DummyOperator`` sentinel
+    on a non-match), this raises ``ValueError`` so a malformed worker id
+    fails loudly rather than yielding a wrong id silently.
+    """
+    match = worker_name_pattern.fullmatch(worker_id)
+    if match:
+        return match.group(2)
+    raise ValueError(f"Invalid worker ID format: {worker_id}")
 
 
 def serialize_global_port_identity(obj: GlobalPortIdentity) -> str:
@@ -43,24 +64,25 @@ def serialize_global_port_identity(obj: GlobalPortIdentity) -> str:
     ``(logicalOpId=<logicalOpId>,layerName=<layerName>,
     portId=<portId.id>,isInternal=<portId.internal>,isInput=<input>)``
 
-    Raises ValueError if `logicalOpId` or `layerName` contains an underscore
-    (VFS URI parsing relies on the absence of '_'), or if `portId` is negative.
+    Raises ValueError if `logicalOpId` or `layerName` contains an underscore or a
+    slash (VFS URI parsing relies on the absence of both), or if `portId` is
+    negative. Mirrors GlobalPortIdentitySerde (Scala).
     """
     logical_op_id = obj.op_id.logical_op_id.id
     layer_name = obj.op_id.layer_name
     port_id = obj.port_id.id
     is_internal = obj.port_id.internal
     is_input_port = obj.input
-    if "_" in logical_op_id:
-        raise ValueError(
-            f"logicalOpId must not contain '_' "
-            f"(VFS URI parsing relies on this): {logical_op_id}"
-        )
-    if "_" in layer_name:
-        raise ValueError(
-            f"layerName must not contain '_' "
-            f"(VFS URI parsing relies on this): {layer_name}"
-        )
+    for field, value in (("logicalOpId", logical_op_id), ("layerName", layer_name)):
+        # '_' would collide with the separator the storage key is built from, and
+        # '/' would add path segments to the VFS URI this string is interpolated
+        # into -- letting an id forge structure the URI never meant to have.
+        for forbidden in ("_", "/"):
+            if forbidden in value:
+                raise ValueError(
+                    f"{field} must not contain '{forbidden}' "
+                    f"(VFS URI parsing relies on this): {value}"
+                )
     if port_id < 0:
         raise ValueError(f"portId must be non-negative: {port_id}")
     return (

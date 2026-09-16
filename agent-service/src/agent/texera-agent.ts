@@ -75,11 +75,11 @@ type ReActStepCallback = (step: ReActStep) => void;
 /**
  * A single Texera agent instance.
  *
- * Owns the conversation (ReAct step tree with HEAD/checkout semantics), the
+ * Owns the conversation (ReAct step tree with HEAD tracking), the
  * workflow being edited (`WorkflowState`), cached operator execution results
  * (`WorkflowResultState`), and the tool surface exposed to the LLM. Each call
  * to `sendMessage` drives one multi-step generation via the Vercel AI SDK,
- * streaming step updates to subscribed websockets.
+ * streaming step updates to subscribed clients.
  */
 export class TexeraAgent {
   readonly agentId: string;
@@ -95,7 +95,7 @@ export class TexeraAgent {
   private stepCounter = 0;
   private workflowResultState: WorkflowResultState;
 
-  private websockets: Set<any> = new Set();
+  private clients: Set<any> = new Set();
 
   private model: LanguageModel;
   private systemPrompt: string;
@@ -266,16 +266,16 @@ export class TexeraAgent {
     return this.workflowResultState;
   }
 
-  getWebsockets(): Set<any> {
-    return this.websockets;
+  getClients(): Set<any> {
+    return this.clients;
   }
 
-  addWebsocket(ws: any): void {
-    this.websockets.add(ws);
+  addClient(ws: any): void {
+    this.clients.add(ws);
   }
 
-  removeWebsocket(ws: any): void {
-    this.websockets.delete(ws);
+  removeClient(ws: any): void {
+    this.clients.delete(ws);
   }
 
   getReActSteps(): ReActStep[] {
@@ -296,16 +296,6 @@ export class TexeraAgent {
 
   getAllSteps(): ReActStep[] {
     return Array.from(this.stepsById.values()).filter(s => s.id !== INITIAL_STEP_ID);
-  }
-
-  checkout(stepId: string): boolean {
-    const step = this.stepsById.get(stepId);
-    if (!step && stepId !== INITIAL_STEP_ID) return false;
-    this.head = stepId;
-    if (step?.afterWorkflowContent) {
-      this.workflowState.setWorkflowContent(step.afterWorkflowContent);
-    }
-    return true;
   }
 
   setStepCallback(callback: ReActStepCallback | null): void {
@@ -667,7 +657,8 @@ export class TexeraAgent {
         stopped: false,
       };
     } catch (error: any) {
-      const isAborted = error.name === "AbortError" || this.abortController?.signal.aborted;
+      const errorMessage = error?.message || String(error);
+      const isAborted = error?.name === "AbortError" || this.abortController?.signal.aborted;
 
       if (isAborted) {
         stepIndex++;
@@ -703,7 +694,7 @@ export class TexeraAgent {
         stepId: stepIndex,
         timestamp: Date.now(),
         role: "agent",
-        content: `Error: ${error.message || String(error)}`,
+        content: `Error: ${errorMessage}`,
         isBegin: false,
         isEnd: true,
       };
@@ -715,7 +706,7 @@ export class TexeraAgent {
         messages: [],
         usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
         stopped: false,
-        error: error.message || String(error),
+        error: errorMessage,
       };
     } finally {
       this.abortController = null;
@@ -831,7 +822,7 @@ export class TexeraAgent {
 
     this.workflowState.destroy();
 
-    this.websockets.clear();
+    this.clients.clear();
 
     this.reActStepsByMessageId.clear();
     this.stepsById.clear();

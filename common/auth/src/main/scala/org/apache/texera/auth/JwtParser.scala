@@ -26,6 +26,7 @@ import org.jose4j.jwt.JwtClaims
 import org.jose4j.lang.UnresolvableKeyException
 
 import java.util.Optional
+import scala.util.chaining.scalaUtilChainingOps
 
 /** Single source of truth for converting a verified JWT into a [[SessionUser]].
   *
@@ -61,18 +62,18 @@ object JwtParser extends LazyLogging {
     // call writes Integer; widen via Number to handle both cases.
     val userId = claims.getClaimValue("userId", classOf[Number]).intValue()
     val role = UserRoleEnum.valueOf(claims.getClaimValue("role").asInstanceOf[String])
-    val googleId = claims.getClaimValue("googleId", classOf[String])
-    val googleAvatar = claims.getClaimValue("googleAvatar", classOf[String])
-    // Build via setters (not the positional jooq constructor) so this keeps compiling
-    // when the User table gains columns in this fork — e.g. the deployment's `permission`
-    // JSONB column, which is intentionally left unset here.
-    val user = new User()
-    user.setUid(userId)
-    user.setName(userName)
-    user.setEmail(email)
-    user.setGoogleId(googleId)
-    user.setGoogleAvatar(googleAvatar)
-    user.setRole(role)
-    new SessionUser(user)
+
+    val avatar = Option(claims.getClaimValue("avatar", classOf[String]))
+      .getOrElse(claims.getClaimValue("googleAvatar", classOf[String]))
+
+    new SessionUser(
+      new User().tap { user =>
+        user.setUid(userId)
+        user.setName(userName)
+        user.setEmail(email)
+        user.setRole(role)
+        user.setAvatar(avatar)
+      }
+    )
   }
 }
