@@ -78,12 +78,14 @@ postgresql:
       storageClass: standard
       existingClaim: "postgresql-data-pvc"
 
-minio:
+rustfs:
   persistence:
     enabled: true
     size: 20Gi
+    # Same reason as postgresql above: the chart defaults to "local-path", whose
+    # provisioner minikube does not install, so the claim would stay Pending and
+    # take the object store -- and therefore LakeFS -- down with it.
     storageClass: standard
-    existingClaim: "minio-data-pvc"
 
 lakefs:
   # Presigned upload/download URLs must name a host that both the browser and the
@@ -100,12 +102,12 @@ lakefs:
     blockstore:
       type: s3
       s3:
-        endpoint: http://texera-minio:9000
+        endpoint: http://texera-rustfs-svc:9000
         pre_signed_expiry: 15m
         pre_signed_endpoint: http://192.168.121.2:31000
         force_path_style: true
         credentials:
-          access_key_id: texera_minio
+          access_key_id: texera_rustfs
           secret_access_key: password
 
 # The pool runs the stock engine image. Pinning the whole pool to a specialised
