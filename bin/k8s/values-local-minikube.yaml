@@ -41,6 +41,13 @@ global:
 
 # Built from bin/dockerfiles/mounter.dockerfile into the node's daemon.
 mounter:
+  # On here, against the chart default. Mounting is what the demos are about -- a
+  # workflow names a model and the engine mounts that LakeFS repository into the
+  # computing unit rather than copying it -- so without this the AlphaFold operator
+  # has no sequence database to search. The default is off because a computing-unit
+  # pod then carries a hostPath volume, which the `baseline` and `restricted` Pod
+  # Security Standards forbid; minikube enforces neither, so opting in here is safe.
+  enabled: true
   imagePullPolicy: IfNotPresent
 
 # No dockerfile for this in-tree, so there is nothing to build locally and the
@@ -83,6 +90,10 @@ lakefs:
   # in-cluster services can reach. The chart default (localhost:31000) only works when
   # MinIO's NodePort happens to be on the caller's own loopback, which is true for
   # neither on minikube -- use the node IP instead.
+  #
+  # This is per-profile: `minikube -p <profile> ip` prints it, and a stale value here
+  # is not a start-up failure -- the cluster comes up and uploads fail later, when a
+  # presigned URL is followed. The address below is the texera-staging profile's.
   lakefsConfig: |
     database:
       type: postgres
@@ -91,7 +102,7 @@ lakefs:
       s3:
         endpoint: http://texera-minio:9000
         pre_signed_expiry: 15m
-        pre_signed_endpoint: http://192.168.58.2:31000
+        pre_signed_endpoint: http://192.168.121.2:31000
         force_path_style: true
         credentials:
           access_key_id: texera_minio
