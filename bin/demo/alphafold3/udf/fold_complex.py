@@ -64,6 +64,9 @@ SEED = 1
 # A 667-token complex has 445k PAE cells; the heatmap needs far fewer to read.
 PAE_BIN = 3
 
+# A table cell shows about this many letters of a sequence before clipping it.
+SEQ_PREVIEW = 10
+
 # Band labels are shown in charts, which Texera re-serializes; keep <, > and & out.
 BANDS = [
     (90, "Very high (90-100)"),
@@ -233,7 +236,7 @@ class ProcessTupleOperator(UDFOperatorV2):
             yield row(section="entity", label=m["entity"], category=m["type"],
                       chain=", ".join(m["chains"]), i=m["copies"],
                       residues=len(m["sequence"]) if m["type"] not in ("ion", "ligand") else 1,
-                      text=m["sequence"] if len(m["sequence"]) <= 60 else m["sequence"][:57] + "...")
+                      text=m["sequence"] if len(m["sequence"]) <= SEQ_PREVIEW else m["sequence"][:SEQ_PREVIEW] + "…")
 
         chain_ids = [c for m in self.molecules for c in m["chains"]]
         for idx, c in enumerate(chain_ids):
