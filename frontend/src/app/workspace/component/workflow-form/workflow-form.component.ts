@@ -53,6 +53,7 @@ import { FormBindingService, ResolvedField } from "../../service/form-binding/fo
 import { WorkflowActionService } from "../../service/workflow-graph/model/workflow-action.service";
 import { ValidationWorkflowService } from "../../service/validation/validation-workflow.service";
 import { GuiConfigService } from "../../../common/service/gui-config.service";
+import { WarehouseService } from "../../../common/service/warehouse/warehouse.service";
 import { WorkflowConsoleService } from "../../service/workflow-console/workflow-console.service";
 import { WorkflowResultService } from "../../service/workflow-result/workflow-result.service";
 import { PanelResizeService } from "../../service/workflow-result/panel-resize/panel-resize.service";
@@ -299,7 +300,8 @@ export class WorkflowFormComponent implements OnInit, OnDestroy {
     // Same source the operator canvas reads its "Invalid" / "Empty" states from, so Run is
     // disabled here exactly when it is disabled there.
     private validationWorkflowService: ValidationWorkflowService,
-    private config: GuiConfigService
+    private config: GuiConfigService,
+    private warehouseService: WarehouseService
   ) {}
 
   ngOnInit(): void {
@@ -1526,6 +1528,12 @@ export class WorkflowFormComponent implements OnInit, OnDestroy {
     );
   }
 
+  /** The exact condition ExecuteWorkflowService refuses a run on, so the button can say it first
+   *  instead of starting nothing and explaining in a toast. */
+  public get hasNoWarehouse(): boolean {
+    return this.config.env.warehouseEnabled && this.warehouseService.getSelectedWarehouseIdValue() === undefined;
+  }
+
   /** No unit chosen yet: the button shows a disabled "Connect" hint and the unit is picked in the
    *  embedded selector -- unlike the canvas, where the Connect button is itself the click target. */
   public get hasNoComputingUnit(): boolean {
@@ -1565,6 +1573,10 @@ export class WorkflowFormComponent implements OnInit, OnDestroy {
     }
     if (this.hasNoComputingUnit) {
       return { label: "Connect", icon: "plus-circle", disabled: true };
+    }
+    // After the unit, as the canvas orders them: somewhere to compute before somewhere to write.
+    if (this.hasNoWarehouse) {
+      return { label: "Warehouse", icon: "plus-circle", disabled: true };
     }
     // A unit is chosen and connected, but shared to this reader read-only: the canvas gates
     // execution on write access to the unit, so the form disables Run rather than sending a request
