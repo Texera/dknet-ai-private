@@ -18,7 +18,16 @@
  */
 
 import { UntilDestroy } from "@ngneat/until-destroy";
-import { AfterViewInit, Component, EventEmitter, Input, Output, ViewChild } from "@angular/core";
+import {
+  AfterViewInit,
+  Component,
+  ElementRef,
+  EventEmitter,
+  Input,
+  OnDestroy,
+  Output,
+  ViewChild,
+} from "@angular/core";
 import {
   DatasetFileNode,
   getRelativePathFromDatasetFileNode,
@@ -65,7 +74,7 @@ function countNodes(nodes: DatasetFileNode[]): number {
     NzTooltipDirective,
   ],
 })
-export class UserDatasetVersionFiletreeComponent implements AfterViewInit {
+export class UserDatasetVersionFiletreeComponent implements AfterViewInit, OnDestroy {
   @Input()
   public isTreeNodeDeletable: boolean = false;
 
@@ -95,6 +104,11 @@ export class UserDatasetVersionFiletreeComponent implements AfterViewInit {
   public isExpandAllAfterViewInit = false;
 
   @ViewChild("tree") tree: any;
+  @ViewChild("fileTreeContainer") private fileTreeContainer?: ElementRef<HTMLElement>;
+
+  // Set once the container has actually been laid out with a non-zero height.
+  private viewportMeasured = false;
+  private containerResizeObserver?: ResizeObserver;
 
   @Output()
   setCoverImage = new EventEmitter<string>();
@@ -143,6 +157,40 @@ export class UserDatasetVersionFiletreeComponent implements AfterViewInit {
     if (this.isExpandAllAfterViewInit) {
       this.tree.treeModel.expandAll();
     }
+    this.observeContainerForFirstLayout();
+  }
+
+  ngOnDestroy(): void {
+    this.containerResizeObserver?.disconnect();
+  }
+
+  /**
+   * `useVirtualScroll` renders only the rows it believes fall inside a measured
+   * viewport, and the tree measures that viewport once after init. A host that
+   * reveals this component asynchronously -- an `nz-collapse-panel` animating
+   * open, a tab becoming active -- is still zero-height at that moment, so every
+   * row is culled and the tree stays blank even though the data arrived. The
+   * fixed re-measure timer in the `fileTreeNodes` setter can lose the same race.
+   *
+   * Watching the container instead of guessing a delay: the first time it has a
+   * real height, re-measure. Cheap, and it covers every host.
+   */
+  private observeContainerForFirstLayout(): void {
+    const container = this.fileTreeContainer?.nativeElement;
+    if (!container || typeof ResizeObserver === "undefined") {
+      return;
+    }
+    this.containerResizeObserver = new ResizeObserver(() => {
+      const hasLayout = container.clientHeight > 0 && container.clientWidth > 0;
+      if (hasLayout && !this.viewportMeasured) {
+        this.viewportMeasured = true;
+        this.tree?.sizeChanged();
+      } else if (!hasLayout) {
+        // Hidden again (panel collapsed); re-measure next time it is revealed.
+        this.viewportMeasured = false;
+      }
+    });
+    this.containerResizeObserver.observe(container);
   }
 
   isImageFile(fileName: string): boolean {

@@ -77,6 +77,29 @@ storage:
     accessKeyId: ""
     secretAccessKey: ""
 
+# In-cluster MinIO, kept for deployments whose object data predates the rustfs
+# switch. Mutually exclusive with rustfs: enable one and point storage.s3 at it.
+minio:
+  enabled: false
+  mode: standalone
+  image:
+    repository: bitnamilegacy/minio
+    tag: 2025.3.12-debian-12-r0
+  gateway:
+    enabled: false
+    hostname: ""
+    tlsSecretName: ""
+  auth:
+    rootUser: texera_minio
+    rootPassword: password
+  service:
+    type: ClusterIP
+  persistence:
+    enabled: true
+    size: 20Gi
+    storageClass: local-path
+    existingClaim: "minio-data-pvc"
+
 rustfs:
   # Set to false to disable the in-cluster RustFS and point the services at an
   # external S3 store instead (configure storage.s3 above and the lakefs/
@@ -266,6 +289,9 @@ jupyterPool:
   maxRequestedResources:
     cpu: 50
     memory: 50Gi
+    # Per-model GPU resources, when the device plugin advertises one resource per
+    # model (e.g. nvidia.com/h100: 1). Empty keeps the single flat nvidia.com/gpu cap.
+    gpuResources: {}
 
 workflowComputingUnitManager:
   name: workflow-computing-unit-manager

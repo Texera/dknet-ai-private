@@ -37,7 +37,6 @@ import { NzButtonComponent } from "ng-zorro-antd/button";
 import { ɵNzTransitionPatchDirective } from "ng-zorro-antd/core/transition-patch";
 import { NzIconDirective } from "ng-zorro-antd/icon";
 import { NzWaveDirective } from "ng-zorro-antd/core/wave";
-import { MarkdownDescriptionComponent } from "../../../../dashboard/component/user/markdown-description/markdown-description.component";
 import { WorkflowEditorComponent } from "../../../../workspace/component/workflow-editor/workflow-editor.component";
 import { MiniMapComponent } from "../../../../workspace/component/workflow-editor/mini-map/mini-map.component";
 import { formatCount } from "../../../../common/util/format.util";
@@ -57,7 +56,6 @@ export const THROTTLE_TIME_MS = 1000;
     NzIconDirective,
     NzWaveDirective,
     NgClass,
-    MarkdownDescriptionComponent,
     WorkflowEditorComponent,
     MiniMapComponent,
   ],

@@ -271,8 +271,11 @@ class ComputingUnitManagingResource {
       case WorkflowComputingUnitTypeEnum.kubernetes =>
         val podLimits: Map[String, String] = KubernetesClient.getPodLimits(unit.getCuid)
 
-        // Get GPU value by finding the exact configured resource key
-        val gpuValue = podLimits.getOrElse(KubernetesConfig.gpuResourceKey, "0")
+        // A unit may have been scheduled through a per-model GPU resource, so report
+        // whichever GPU resource the pod actually carries rather than the flat key alone.
+        val gpuValue = podLimits
+          .collectFirst { case (key, value) if KubernetesConfig.isGpuResourceKey(key) => value }
+          .getOrElse("0")
 
         WorkflowComputingUnitResourceLimit(
           podLimits("cpu"),
@@ -304,11 +307,11 @@ class ComputingUnitManagingResource {
     * Returns GPU model labels for nodes that currently have enough free GPU capacity.
     *
     * The list is recomputed on every call by querying live K8s node state and running pod
-    * GPU resource usage, so it reflects real-time availability.  "Any" is always the first
-    * entry and means the scheduler picks the node freely.
+    * GPU resource usage, so it reflects real-time availability. Only models that can be
+    * satisfied right now are listed, so an empty array means no GPU is free.
     *
     * @param gpuCount number of GPUs the user intends to request (default 1)
-    * @return JSON array of available GPU model strings, e.g. ["Any","H200","A40"]
+    * @return JSON array of available GPU model strings, e.g. ["A40","H100","H200"]
     */
   @GET
   @RolesAllowed(Array("REGULAR", "ADMIN"))
@@ -456,6 +459,9 @@ class ComputingUnitManagingResource {
               "cpuLimit" -> param.cpuLimit,
               "memoryLimit" -> param.memoryLimit,
               "gpuLimit" -> param.gpuLimit,
+              // Kept with the unit because the pod records only the resource it requested,
+              // and "which model is this running on?" should still have an answer.
+              "gpuModel" -> param.gpuModel,
               "jvmMemorySize" -> param.jvmMemorySize,
               "shmSize" -> param.shmSize,
               // The name is stored with the id because a curated image can be removed

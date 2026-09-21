@@ -17,8 +17,13 @@
  * under the License.
  */
 
+import { ExecutionMode } from "./workflow";
+
 // Please refer to core/config/src/main/resources/gui.conf for the definition of each config item
 export interface GuiConfig {
+  // Served by the backend (gui.workflow-workspace.default-execution-mode). This fork hides the
+  // execution-mode selector, but the value is still read programmatically (notebook migration).
+  defaultExecutionMode: ExecutionMode;
   exportExecutionResultEnabled: boolean;
   selectingFilesFromDatasetsEnabled: boolean;
   localLogin: boolean;

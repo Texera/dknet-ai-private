@@ -127,21 +127,21 @@ class KubernetesClient(
     *   remaining = allocatable GPUs − GPUs already requested by running pods
     * and includes the model in the result only when remaining >= requestedCount.
     *
-    * "Any" is always prepended so the caller can opt out of model pinning.
+    * Only models that can actually be satisfied are returned. "Any" is deliberately not
+    * offered: it resolves to the flat GPU resource, so on a deployment that exposes its
+    * cards per model it cannot reach them, and -- being first in the list -- it became the
+    * caller's default and yielded a permanently Pending pod. A caller that still sends
+    * "Any" (or no model) keeps the old flat-resource behaviour.
     *
     * @param requestedCount number of GPUs the user wants to reserve
-    * @return sorted list of available GPU model strings, prefixed with "Any"
+    * @return sorted list of GPU model strings that currently have capacity; may be empty
     */
   def getAvailableGpuModels(requestedCount: Int): List[String] = {
     val labelKey = KubernetesConfig.gpuNodeLabelKey
-    val gpuKey = KubernetesConfig.gpuResourceKey
+    val flatKey = KubernetesConfig.gpuResourceKey
+    val modelKeys = KubernetesConfig.gpuModelResourceKeys
 
-    val nodes = client
-      .nodes()
-      .list()
-      .getItems
-      .asScala
-      .filter(n => Option(n.getMetadata.getLabels).exists(_.containsKey(labelKey)))
+    val nodes = client.nodes().list().getItems.asScala
 
     val runningPods = client
       .pods()
@@ -154,40 +154,54 @@ class KubernetesClient(
         phase == "Succeeded" || phase == "Failed"
       }
 
-    val usedPerNode: Map[String, Int] = runningPods
-      .groupBy(p => Option(p.getSpec.getNodeName).getOrElse(""))
-      .filter(_._1.nonEmpty)
-      .map {
-        case (nodeName, pods) =>
-          val total = pods
-            .flatMap(_.getSpec.getContainers.asScala)
-            .map { c =>
-              Option(c.getResources.getLimits)
-                .flatMap(l => Option(l.get(gpuKey)))
-                .flatMap(q => Option(q.getAmount).flatMap(_.toIntOption))
-                .getOrElse(0)
+    // Requested GPUs keyed by (node, resource). A node advertising one resource per model
+    // must have them counted apart: pooling them would let an H200 request consume the
+    // headroom that only the H100 has.
+    val used: Map[(String, String), Int] = runningPods
+      .flatMap { pod =>
+        val nodeName = Option(pod.getSpec.getNodeName).getOrElse("")
+        pod.getSpec.getContainers.asScala.flatMap { container =>
+          Option(container.getResources.getLimits)
+            .map(_.asScala.toMap)
+            .getOrElse(Map.empty[String, Quantity])
+            .collect {
+              case (key, quantity) if KubernetesConfig.isGpuResourceKey(key) =>
+                (nodeName, key) -> Option(quantity.getAmount).flatMap(_.toIntOption).getOrElse(0)
             }
-            .sum
-          nodeName -> total
+        }
       }
-      .toMap
+      .groupBy(_._1)
+      .map { case (nodeAndKey, entries) => nodeAndKey -> entries.map(_._2).sum }
 
-    val available = nodes
+    def remaining(node: Node, resourceKey: String): Int = {
+      val total = Option(node.getStatus.getAllocatable)
+        .flatMap(allocatable => Option(allocatable.get(resourceKey)))
+        .flatMap(quantity => Option(quantity.getAmount).flatMap(_.toIntOption))
+        .getOrElse(0)
+      total - used.getOrElse((node.getMetadata.getName, resourceKey), 0)
+    }
+
+    // A model with its own resource is offered as soon as any node still has one free,
+    // whatever else that node holds. This is what makes a mixed-model node addressable.
+    val byResource = modelKeys.collect {
+      case (model, resourceKey)
+          if nodes.exists(node => remaining(node, resourceKey) >= requestedCount) =>
+        model
+    }.toList
+
+    // Models known only by node label. The label speaks for the whole node, so this is
+    // accurate only while a node holds a single model; it remains for deployments that have
+    // not split their GPU resources.
+    val byLabel = nodes
+      .filter(node => Option(node.getMetadata.getLabels).exists(_.containsKey(labelKey)))
       .flatMap { node =>
-        val name = node.getMetadata.getName
         val model = node.getMetadata.getLabels.get(labelKey)
-        val total = Option(node.getStatus.getAllocatable)
-          .flatMap(a => Option(a.get(gpuKey)))
-          .flatMap(q => Option(q.getAmount).flatMap(_.toIntOption))
-          .getOrElse(0)
-        val remaining = total - usedPerNode.getOrElse(name, 0)
-        if (remaining >= requestedCount) Some(model) else None
+        if (!modelKeys.contains(model) && remaining(node, flatKey) >= requestedCount) Some(model)
+        else None
       }
-      .distinct
-      .sorted
       .toList
 
-    "Any" :: available
+    (byResource ++ byLabel).distinct.sorted
   }
 
   def createPod(
@@ -238,10 +252,14 @@ class KubernetesClient(
       .addToLimits("cpu", new Quantity(cpuLimit))
       .addToLimits("memory", new Quantity(memoryLimit))
 
+    // The resource a GPU model is scheduled through. When the deployment advertises one
+    // resource per model, requesting that resource is what selects the card, and it keeps
+    // working on a node that holds several models.
+    val gpuKey = KubernetesConfig.gpuResourceKeyFor(gpuModel)
+
     // Only add GPU resources if the requested amount is greater than 0
     if (gpuLimit != "0") {
-      // Use the configured GPU resource key directly
-      resourceBuilder.addToLimits(KubernetesConfig.gpuResourceKey, new Quantity(gpuLimit))
+      resourceBuilder.addToLimits(gpuKey, new Quantity(gpuLimit))
     }
 
     // Build the pod with metadata
@@ -259,12 +277,14 @@ class KubernetesClient(
       .withNewSpec()
 
     // Only add runtimeClassName when using NVIDIA GPU
-    if (gpuLimit != "0" && KubernetesConfig.gpuResourceKey.contains("nvidia")) {
+    if (gpuLimit != "0" && gpuKey.contains("nvidia")) {
       specBuilder.withRuntimeClassName("nvidia")
     }
 
-    // Pin the pod to a specific GPU model node when the user requested one
-    if (gpuLimit != "0") {
+    // Pin by node label only when the model has no resource of its own. A label names the
+    // whole node, so on a mixed-model node it would select the node without selecting the
+    // card - the resource request above already does that, and correctly.
+    if (gpuLimit != "0" && !KubernetesConfig.gpuModelHasOwnResource(gpuModel)) {
       gpuModel.filter(m => m.nonEmpty && m != "Any").foreach { model =>
         specBuilder.withNodeSelector(
           Map(KubernetesConfig.gpuNodeLabelKey -> model).asJava

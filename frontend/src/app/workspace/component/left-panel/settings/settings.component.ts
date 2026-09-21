@@ -26,7 +26,6 @@ import { UserService } from "../../../../common/service/user/user.service";
 import { NotificationService } from "src/app/common/service/notification/notification.service";
 import { GuiConfigService } from "../../../../common/service/gui-config.service";
 import { ExecutionMode } from "../../../../common/type/workflow";
-import { NzRadioGroupComponent, NzRadioComponent } from "ng-zorro-antd/radio";
 import { NgClass, NgIf } from "@angular/common";
 
 @UntilDestroy()
@@ -34,7 +33,7 @@ import { NgClass, NgIf } from "@angular/common";
   selector: "texera-settings",
   templateUrl: "./settings.component.html",
   styleUrls: ["./settings.component.scss"],
-  imports: [FormsModule, ReactiveFormsModule, NzRadioGroupComponent, NzRadioComponent, NgClass, NgIf],
+  imports: [FormsModule, ReactiveFormsModule, NgClass, NgIf],
 })
 export class SettingsComponent implements OnInit {
   settingsForm!: FormGroup;

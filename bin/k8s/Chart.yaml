@@ -46,6 +46,13 @@ dependencies:
     version: 16.5.6
     repository: https://charts.bitnami.com/bitnami
 
+  # Retained alongside rustfs: this deployment's object store is still MinIO and
+  # its data lives in minio-data-pvc. Off by default; turn on with minio.enabled.
+  - name: minio
+    version: 15.0.7
+    repository: https://charts.bitnami.com/bitnami
+    condition: minio.enabled
+
   - name: rustfs
     version: 1.0.0-rc.6
     repository: https://charts.rustfs.com

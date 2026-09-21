@@ -69,6 +69,45 @@ object KubernetesConfig {
   // Node label key used to identify GPU model on each worker node
   val gpuNodeLabelKey: String = conf.getString("kubernetes.computing-unit-gpu-node-label-key")
 
+  /**
+    * GPU model -> the Kubernetes resource that backs it, parsed from
+    * "H100=nvidia.com/h100,H200=nvidia.com/h200". Empty when the deployment advertises one
+    * flat GPU resource, which is the only case a node label can describe correctly.
+    * Malformed pairs are dropped rather than failing startup: a typo here must not take the
+    * service down, it just leaves that model on the flat resource.
+    */
+  val gpuModelResourceKeys: Map[String, String] =
+    conf
+      .getString("kubernetes.computing-unit-gpu-model-resource-keys")
+      .split(",")
+      .map(_.trim)
+      .filter(_.nonEmpty)
+      .flatMap { pair =>
+        pair.split("=", 2) match {
+          case Array(model, key) if model.trim.nonEmpty && key.trim.nonEmpty =>
+            Some(model.trim -> key.trim)
+          case _ => None
+        }
+      }
+      .toMap
+
+  /** Every GPU resource this deployment may schedule against, flat key included. */
+  val allGpuResourceKeys: Set[String] = gpuModelResourceKeys.values.toSet + gpuResourceKey
+
+  def isGpuResourceKey(key: String): Boolean = allGpuResourceKeys.contains(key)
+
+  /** "Any" means the user opted out of pinning, so it is never a model in its own right. */
+  private def pinnedModel(model: Option[String]): Option[String] =
+    model.map(_.trim).filter(m => m.nonEmpty && m != "Any")
+
+  /** True when requesting this model's own resource is what selects the card. */
+  def gpuModelHasOwnResource(model: Option[String]): Boolean =
+    pinnedModel(model).exists(gpuModelResourceKeys.contains)
+
+  /** The resource a GPU model is requested through; the flat key when it has none. */
+  def gpuResourceKeyFor(model: Option[String]): String =
+    pinnedModel(model).flatMap(gpuModelResourceKeys.get).getOrElse(gpuResourceKey)
+
   // Per-user persistent storage: each user gets an isolated PVC created dynamically by the manager
   val userStorageEnabled: Boolean = conf.getBoolean("kubernetes.user-storage-enabled")
   val userStorageClass: String = conf.getString("kubernetes.user-storage-class")

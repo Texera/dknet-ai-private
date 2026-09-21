@@ -28,4 +28,9 @@ spec:
     {{- if .Values.workflowComputingUnitPool.maxRequestedResources.nvidiaGpu }}
     requests.nvidia.com/gpu: "{{ .Values.workflowComputingUnitPool.maxRequestedResources.nvidiaGpu }}"
     {{- end }}
+    {{- /* Renamed per-model GPU resources are not covered by requests.nvidia.com/gpu,
+           so each one a deployment advertises needs its own cap here. */}}
+    {{- range $resource, $limit := .Values.workflowComputingUnitPool.maxRequestedResources.gpuResources }}
+    requests.{{ $resource }}: "{{ $limit }}"
+    {{- end }}
 {{- end }} 

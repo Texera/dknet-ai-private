@@ -248,7 +248,10 @@ spec:
           port: {{ .Values.agentService.service.port }}
 {{- end }}
 ---
-# RustFS Route
+# Object-store route. The browser fetches presigned URLs directly from the object
+# store, so whichever store is in use must be reachable from outside the cluster --
+# without this route every presigned download 404s at the gateway even though the
+# backend signs the URL correctly.
 {{- if .Values.rustfs.gateway.enabled }}
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
@@ -267,5 +270,26 @@ spec:
             value: /
       backendRefs:
         - name: {{ .Release.Name }}-rustfs-svc
+          port: 9000
+{{- end }}
+{{- if and .Values.minio.enabled .Values.minio.gateway.enabled }}
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: texera-minio-route
+  namespace: {{ .Release.Namespace }}
+spec:
+  parentRefs:
+    - name: {{ .Release.Name }}-gateway
+  hostnames:
+    - {{ .Values.minio.gateway.hostname }}
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: {{ .Release.Name }}-minio
           port: 9000
 {{- end }}
