@@ -145,7 +145,11 @@ class WorkflowService(
 
   val resultService: ExecutionResultService =
     new ExecutionResultService(workflowId, computingUnitId, stateStore)
-  val cacheService: OperatorPortCacheService = {
+  // lazy: SqlServer.getInstance() reaches for the configured database, and constructing a
+  // WorkflowService must not require one -- the websocket resource builds one per session,
+  // including in tests that never start a database. Every use of this field happens while a
+  // workflow executes or is disposed, well after construction.
+  lazy val cacheService: OperatorPortCacheService = {
     val dao = new org.apache.texera.web.dao.OperatorPortCacheDao(
       org.apache.texera.dao.SqlServer.getInstance()
     )

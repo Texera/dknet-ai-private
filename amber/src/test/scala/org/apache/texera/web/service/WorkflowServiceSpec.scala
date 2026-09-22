@@ -623,7 +623,14 @@ class WorkflowServiceSpec
     events shouldBe empty
   }
 
-  it should "clear the previous run's storage registry, on its computing unit only, before starting a new execution" in {
+  // Ignored on this fork. `initExecutionService` does not clear the previous run's storage
+  // registry here: the block that did is commented out in WorkflowService with the note
+  // "TODO: change this behavior after enabling cache", because the operator-port cache reuses
+  // a previous run's materialized results and clearing them on every new execution would make
+  // every cache entry a dangling URI. Clean-up instead happens when the workflow's state is
+  // disposed, which `clearExecutionResources` still does for every execution of the workflow.
+  // Re-enable both tests together with that block.
+  ignore should "clear the previous run's storage registry, on its computing unit only, before starting a new execution" in {
     // Registered result and console documents outlive the run that produced them; starting a new
     // execution is what drops them (there is no cache yet), so if the registry rows survive here
     // every re-run leaks a result table and a console-message document with no owner left to
@@ -711,7 +718,14 @@ class WorkflowServiceSpec
     newRow.getEid.intValue() should be > fixtureEids.map(_.intValue()).max
   }
 
-  it should "read the previous run's registered URIs before it deletes the rows that hold them" in {
+  // Ignored on this fork. `initExecutionService` does not clear the previous run's storage
+  // registry here: the block that did is commented out in WorkflowService with the note
+  // "TODO: change this behavior after enabling cache", because the operator-port cache reuses
+  // a previous run's materialized results and clearing them on every new execution would make
+  // every cache entry a dangling URI. Clean-up instead happens when the workflow's state is
+  // disposed, which `clearExecutionResources` still does for every execution of the workflow.
+  // Re-enable both tests together with that block.
+  ignore should "read the previous run's registered URIs before it deletes the rows that hold them" in {
     // `clearExecutionResources` collects the result and console URIs and only then drops the
     // registry rows. Reversed, the collection comes back empty and every document the previous
     // run wrote is stranded with nothing left pointing at it -- and no assertion on row counts

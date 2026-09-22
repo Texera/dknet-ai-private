@@ -274,7 +274,13 @@ class WorkflowExecutionService(
       executionRuntimeService.unsubscribeAll()
       executionConsoleService.unsubscribeAll()
       executionStatsService.unsubscribeAll()
-      executionCacheService.unsubscribeAll()
+      // Null-checked separately: `client != null` no longer implies this one exists. It is
+      // assigned after the client, so a failure in between -- or a caller that built the
+      // runtime services itself -- leaves it unset, and a teardown that throws here would
+      // skip the reconfiguration service below and leak its subscriptions.
+      if (executionCacheService != null) {
+        executionCacheService.unsubscribeAll()
+      }
       executionReconfigurationService.unsubscribeAll()
     }
 

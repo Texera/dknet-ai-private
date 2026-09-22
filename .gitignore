@@ -120,6 +120,10 @@ metals.sbt
 **/texera-helmchart/charts/
 **/texera-helmchart/*/requirements.lock
 **/texera-helmchart/Chart.lock
+# `helm dependency update` writes these next to the chart; the chart lives at bin/k8s
+# here, not bin/texera-helmchart, so the patterns above never covered it.
+bin/k8s/Chart.lock
+bin/k8s/charts/
 **/.helm/
 
 # Additional Helm/Kubernetes related files
