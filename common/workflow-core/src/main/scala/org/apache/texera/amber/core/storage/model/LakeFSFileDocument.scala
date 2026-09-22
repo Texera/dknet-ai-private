@@ -22,6 +22,7 @@ package org.apache.texera.amber.core.storage.model
 import com.typesafe.scalalogging.LazyLogging
 import org.apache.texera.common.config.EnvironmentalVariable
 import org.apache.texera.amber.core.storage.ResourceType
+import org.apache.texera.amber.core.storage.UserTokenProvider
 import org.apache.texera.amber.core.storage.model.LakeFSFileDocument.userJwtToken
 import org.apache.texera.amber.core.storage.util.LakeFSStorageClient
 
@@ -32,11 +33,11 @@ import java.nio.file.{Files, Path, Paths}
 import scala.jdk.CollectionConverters.IteratorHasAsScala
 
 object LakeFSFileDocument {
-  // Since requests need to be sent to the FileService in order to read the file, we store USER_JWT_TOKEN in the environment vars
-  // This variable should be NON-EMPTY in the dynamic-computing-unit architecture, i.e. each user-created computing unit should store user's jwt token.
-  // In the local development or other architectures, this token can be empty.
-  lazy val userJwtToken: String =
-    sys.env.getOrElse(EnvironmentalVariable.ENV_USER_JWT_TOKEN, "").trim
+  // Requests go to the FileService, which authenticates them as a user. Resolved per read rather
+  // than memoised from the pod environment: on a public computing unit the pod has no user of its
+  // own, and each run authenticates as whoever started it (see UserTokenProvider). Empty in local
+  // development and other architectures, which falls back to reading LakeFS directly.
+  def userJwtToken: String = UserTokenProvider.token
 
   private lazy val datasetPresignEndpoint: String =
     sys.env
@@ -138,9 +139,22 @@ private[storage] class LakeFSFileDocument(uri: URI, val resourceType: ResourceTy
       connection.setRequestProperty("Authorization", s"Bearer $userJwtToken")
 
       try {
-        if (connection.getResponseCode != HttpURLConnection.HTTP_OK) {
+        val responseCode = connection.getResponseCode
+        // A refusal is an answer, not an outage: falling back here would fetch the file with the
+        // deployment's own LakeFS credentials and hand the user bytes the file service just said
+        // they may not have. Only a failure to *reach* an answer may fall back.
+        if (
+          responseCode == HttpURLConnection.HTTP_UNAUTHORIZED ||
+          responseCode == HttpURLConnection.HTTP_FORBIDDEN
+        ) {
+          throw new FileAccessDeniedException(
+            s"Not authorized to read ${getFileRelativePath()} from ${getRepositoryName()} " +
+              s"(HTTP $responseCode)."
+          )
+        }
+        if (responseCode != HttpURLConnection.HTTP_OK) {
           throw new RuntimeException(
-            s"Failed to retrieve presigned URL: HTTP ${connection.getResponseCode}"
+            s"Failed to retrieve presigned URL: HTTP $responseCode"
           )
         }
 
@@ -155,6 +169,7 @@ private[storage] class LakeFSFileDocument(uri: URI, val resourceType: ResourceTy
 
         new URL(presignedUrl).openStream()
       } catch {
+        case e: FileAccessDeniedException => throw e
         case e: Exception =>
           fallbackToLakeFS(e)
       } finally {

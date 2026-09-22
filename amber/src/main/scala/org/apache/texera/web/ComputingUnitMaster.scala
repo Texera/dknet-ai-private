@@ -52,7 +52,7 @@ import org.apache.texera.web.resource.{
   WebsocketPayloadSizeTuner,
   WorkflowWebsocketResource
 }
-import org.apache.texera.web.service.ExecutionsMetadataPersistService
+import org.apache.texera.web.service.{ExecutionsMetadataPersistService, RunIdentity}
 import org.eclipse.jetty.server.session.SessionHandler
 import org.eclipse.jetty.servlet.FilterHolder
 import org.eclipse.jetty.websocket.server.WebSocketUpgradeFilter
@@ -146,6 +146,10 @@ class ComputingUnitMaster extends io.dropwizard.Application[Configuration] with 
       StorageConfig.jdbcUsername,
       StorageConfig.jdbcPassword
     )
+
+    // File reads authenticate as whoever's run is in progress. Without this they fall back to
+    // the pod's own USER_JWT_TOKEN, which a public unit deliberately does not have.
+    RunIdentity.install()
 
     environment.jersey.setUrlPattern("/api/*")
 

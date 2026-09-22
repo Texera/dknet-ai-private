@@ -31,9 +31,12 @@ import { NzIconDirective } from "ng-zorro-antd/icon";
 import { NzTooltipDirective } from "ng-zorro-antd/tooltip";
 import { NzSliderComponent } from "ng-zorro-antd/slider";
 import { NzAlertComponent } from "ng-zorro-antd/alert";
+import { NzCheckboxComponent } from "ng-zorro-antd/checkbox";
 import { WorkflowComputingUnitManagingService } from "../../service/computing-unit/workflow-computing-unit/workflow-computing-unit-managing.service";
 import { ComputingUnitActionsService } from "../../service/computing-unit/computing-unit-actions/computing-unit-actions.service";
 import { NotificationService } from "../../service/notification/notification.service";
+import { UserService } from "../../service/user/user.service";
+import { GuiConfigService } from "../../service/gui-config.service";
 import { DashboardWorkflowComputingUnit, WorkflowComputingUnitType } from "../../type/workflow-computing-unit";
 import { extractErrorMessage } from "../../util/error";
 import { HttpErrorResponse } from "@angular/common/http";
@@ -81,6 +84,7 @@ const DEPLOYMENT_IMAGE = 0;
     NzTooltipDirective,
     NzSliderComponent,
     NzAlertComponent,
+    NzCheckboxComponent,
     FormsModule,
     NgFor,
     NgIf,
@@ -91,6 +95,10 @@ export class ComputingUnitCreateModalComponent implements OnInit, OnChanges {
   @Input() visible = false;
   @Output() visibleChange = new EventEmitter<boolean>();
   @Output() unitCreated = new EventEmitter<DashboardWorkflowComputingUnit>();
+
+  // Create this unit for everyone rather than just the creator. Admin-only; see
+  // canCreatePublicUnit.
+  createAsPublic = false;
 
   // Advanced settings disclosure — collapsed by default, houses the
   // shared-memory and JVM-heap knobs most users never touch.
@@ -134,8 +142,18 @@ export class ComputingUnitCreateModalComponent implements OnInit, OnChanges {
     private computingUnitService: WorkflowComputingUnitManagingService,
     private notificationService: NotificationService,
     private computingUnitActionsService: ComputingUnitActionsService,
-    private cuImageService: CuImageService
+    private cuImageService: CuImageService,
+    private userService: UserService,
+    private config: GuiConfigService
   ) {}
+
+  /**
+   * Whether to offer the "public" option. The backend enforces this too, on an ADMIN-only
+   * endpoint; hiding it here only keeps the form honest.
+   */
+  get canCreatePublicUnit(): boolean {
+    return this.config.env.publicComputingUnitEnabled && this.userService.isAdmin();
+  }
 
   ngOnInit(): void {
     // Fetch available computing unit types
@@ -305,6 +323,9 @@ export class ComputingUnitCreateModalComponent implements OnInit, OnChanges {
       localUri: this.localComputingUnitUri,
       // Left out for the deployment's own image, so the request carries no image at all.
       imageId: this.selectedImageId === DEPLOYMENT_IMAGE ? undefined : this.selectedImageId,
+      // Guarded by the same condition that renders the checkbox, so a stale true from a
+      // previous open cannot leak into a non-admin's request.
+      isPublic: this.canCreatePublicUnit && this.createAsPublic,
     };
 
     this.computingUnitActionsService

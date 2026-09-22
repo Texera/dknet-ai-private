@@ -164,6 +164,11 @@
         <sqlFile path="sql/updates/50.sql"/>
     </changeSet>
 
+    <!-- Public computing units: admin-created units every user may run on, via access_scope -->
+    <changeSet id="51" author="ali">
+        <sqlFile path="sql/updates/51.sql"/>
+    </changeSet>
+
     <!-- example changeSet
     <changeSet id="1" author="author">
         <sqlFile path="sql/updates/1.sql"/>

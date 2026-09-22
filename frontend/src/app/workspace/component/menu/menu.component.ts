@@ -127,6 +127,9 @@ import { JupyterPanelService } from "../../service/jupyter-panel/jupyter-panel.s
 export class MenuComponent implements OnInit, OnDestroy {
   public executionState: ExecutionState; // set this to true when the workflow is started
   public ExecutionState = ExecutionState; // make Angular HTML access enum definition
+  // Place in the public computing unit's queue, shown on the run button while waiting.
+  public queuePosition = 0;
+  public queueLength = 0;
   public ComputingUnitState = ComputingUnitState; // make Angular HTML access enum definition
   public isWorkflowValid: boolean = true; // this will check whether the workflow error or not
   public isWorkflowEmpty: boolean = false;
@@ -237,6 +240,10 @@ export class MenuComponent implements OnInit, OnDestroy {
       .pipe(untilDestroyed(this))
       .subscribe(event => {
         this.executionState = event.current.state;
+        if (event.current.state === ExecutionState.Queued) {
+          this.queuePosition = event.current.position;
+          this.queueLength = event.current.queueLength;
+        }
         this.applyRunButtonBehavior(this.getRunButtonBehavior());
       });
 
@@ -457,6 +464,15 @@ export class MenuComponent implements OnInit, OnDestroy {
           icon: "play-circle",
           disable: false,
           onClick: () => this.runWorkflow(),
+        };
+      case ExecutionState.Queued:
+        // Clickable, unlike the other waiting states: the click gives up the place in the queue.
+        // killWorkflow() is the same message the backend treats as "cancel" while queued.
+        return {
+          text: this.queueLength > 0 ? `Queued ${this.queuePosition}/${this.queueLength}` : "Queued",
+          icon: "clock-circle",
+          disable: false,
+          onClick: () => this.executeWorkflowService.killWorkflow(),
         };
       case ExecutionState.Initializing:
         return {

@@ -484,6 +484,17 @@ texeraEnvVars:
     value: "true"
   - name: COMPUTING_UNIT_SHARING_ENABLED
     value: "true"
+  # Public computing units: units an administrator creates that every user may run on. A public
+  # unit runs one workflow at a time and queues the rest, taking turns between users, so turning
+  # this off also removes the queue -- nothing else queues. Forwarded to each unit's own pod by
+  # the managing service, because a unit decides for itself whether to queue a run.
+  - name: COMPUTING_UNIT_PUBLIC_ENABLED
+    value: "true"
+  # Seconds one run may hold a public unit before the queue reclaims it, so a single wedged
+  # workflow cannot block every other user. 0 disables the watchdog; the run itself is never
+  # killed, the unit is only handed on.
+  - name: COMPUTING_UNIT_PUBLIC_MAX_RUN_SECONDS
+    value: "0"
   - name: USER_SYS_INVITE_ONLY
     value: "true"
   # On by default; set to "false" to accept addresses unproven. This must agree with the

@@ -194,6 +194,16 @@ export type WorkflowStateInfo = Readonly<{
   state: ExecutionState;
 }>;
 
+/**
+ * Where this workflow stands in its public computing unit's queue. Sent to everyone watching the
+ * workflow, so a collaborator sees the same wait as whoever pressed Run.
+ */
+export type WorkflowQueueStatusEvent = Readonly<{
+  queued: boolean;
+  position: number;
+  queueLength: number;
+}>;
+
 export type TexeraWebsocketRequestTypeMap = {
   EditingTimeCompilationRequest: LogicalPlan;
   HeartBeatRequest: {};
@@ -214,6 +224,7 @@ export type TexeraWebsocketRequestTypeMap = {
 export type TexeraWebsocketEventTypeMap = {
   HeartBeatResponse: {};
   WorkflowStateEvent: WorkflowStateInfo;
+  WorkflowQueueStatusEvent: WorkflowQueueStatusEvent;
   OperatorStatisticsUpdateEvent: OperatorStatsUpdate;
   WebResultUpdateEvent: WorkflowResultUpdateEvent;
   RecoveryStartedEvent: {};

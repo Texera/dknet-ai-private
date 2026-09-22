@@ -30,6 +30,8 @@ import { HttpErrorResponse } from "@angular/common/http";
 import type { Mocked } from "vitest";
 import { ComputingUnitCreateModalComponent } from "./computing-unit-create-modal.component";
 import { WorkflowComputingUnitManagingService } from "../../service/computing-unit/workflow-computing-unit/workflow-computing-unit-managing.service";
+import { UserService } from "../../service/user/user.service";
+import { StubUserService } from "../../service/user/stub-user.service";
 import { ComputingUnitStatusService } from "../../service/computing-unit/computing-unit-status/computing-unit-status.service";
 import { MockComputingUnitStatusService } from "../../service/computing-unit/computing-unit-status/mock-computing-unit-status.service";
 import { NotificationService } from "../../service/notification/notification.service";
@@ -92,6 +94,8 @@ describe("ComputingUnitCreateModalComponent", () => {
         { provide: WorkflowComputingUnitManagingService, useValue: mockComputingUnitService },
         { provide: NotificationService, useValue: mockNotificationService },
         { provide: ComputingUnitStatusService, useClass: MockComputingUnitStatusService },
+        // The modal asks who the user is to decide whether to offer the public-unit option.
+        { provide: UserService, useClass: StubUserService },
         ...commonTestProviders,
       ],
       imports: [ComputingUnitCreateModalComponent, HttpClientTestingModule, NoopAnimationsModule],
@@ -160,7 +164,9 @@ describe("ComputingUnitCreateModalComponent", () => {
       expect.anything(),
       expect.anything(),
       expect.anything(),
-      7
+      7,
+      // Private: StubUserService's user is not an admin, so the option is never offered.
+      false
     );
 
     // The image is chosen per unit, so the next one must not inherit it.
@@ -283,7 +289,8 @@ describe("ComputingUnitCreateModalComponent", () => {
       "2G",
       "128Mi",
       // No curated image chosen, so the unit runs the deployment's own.
-      undefined
+      undefined,
+      false
     );
     expect(mockNotificationService.success).toHaveBeenCalledWith("Successfully created the new compute unit");
     expect(unitCreatedSpy).toHaveBeenCalledWith(createdUnit);

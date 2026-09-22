@@ -156,9 +156,25 @@ export class ExecuteWorkflowService {
           case ExecutionState.Failed:
             // for failed state, backend will send an additional message after this status event.
             return undefined;
+          case ExecutionState.Queued:
+            // Queueing is reported by WorkflowQueueStatusEvent, which carries the position; a
+            // bare state event cannot say where in the queue the workflow is, so ignore it.
+            return undefined;
           default:
             return { state: newState };
         }
+      case "WorkflowQueueStatusEvent":
+        // Leaving the queue is not a state of its own: the run was either admitted, in which
+        // case the execution's own events take over immediately, or cancelled, which the kill
+        // path already reported. Either way there is nothing to show here.
+        if (!event.queued) {
+          return undefined;
+        }
+        return {
+          state: ExecutionState.Queued,
+          position: event.position,
+          queueLength: event.queueLength,
+        };
       case "RecoveryStartedEvent":
         return { state: ExecutionState.Recovering };
       case "OperatorCurrentTuplesUpdateEvent":
@@ -428,6 +444,9 @@ export class ExecuteWorkflowService {
       case ExecutionState.Resuming:
       case ExecutionState.Running:
       case ExecutionState.Initializing:
+      // Queued counts as in-execution: the plan was submitted when Run was pressed, so editing
+      // it while waiting would not change what eventually runs.
+      case ExecutionState.Queued:
         this.workflowActionService.disableWorkflowModification();
         return;
       default:

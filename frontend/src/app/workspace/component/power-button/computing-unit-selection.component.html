@@ -152,9 +152,17 @@
     [nzPlacement]="'bottomRight'"
     (nzVisibleChange)="onDropdownVisibilityChange($event)"
     class="computing-units-dropdown-button">
-    <div class="button-content">
+    <div
+      class="button-content"
+      [class.button-content-public]="selectedComputingUnit?.computingUnit?.accessScope === 'PUBLIC'">
+      <i
+        *ngIf="selectedComputingUnit?.computingUnit?.accessScope === 'PUBLIC'"
+        nz-icon
+        nzType="team"
+        nzTheme="outline"
+        class="public-unit-icon"></i>
       <texera-user-avatar
-        *ngIf="selectedComputingUnit"
+        *ngIf="selectedComputingUnit && selectedComputingUnit.computingUnit.accessScope !== 'PUBLIC'"
         [avatar]="selectedComputingUnit ? selectedComputingUnit.ownerAvatar : ''"
         userColor="grey"
         [userName]="selectedComputingUnit ? selectedComputingUnit.ownerName : ''"
@@ -197,17 +205,29 @@
         [ngClass]="{
           'unit-selected': isSelectedUnit(unit),
           'unit-connecting': unit.status === 'Pending',
+          'unit-public': unit.computingUnit.accessScope === 'PUBLIC',
         }"
         [nz-tooltip]="cannotSelectUnit(unit) ? getUnitStatusTooltip(unit) + '. Cannot select.' : ''"
         (click)="onPickComputingUnit(unit)">
         <div class="computing-unit-row">
-          <texera-user-avatar
-            [avatar]="unit.ownerAvatar"
-            userColor="grey"
-            [userName]="unit.ownerName || ''"
-            [style.transform]="'scale(0.65)'"
-            [style.opacity]="0.7">
-          </texera-user-avatar>
+          <!-- A public unit has no owner to show: it is the deployment's, not a person's. -->
+          <i
+            *ngIf="unit.computingUnit.accessScope === 'PUBLIC'; else unitOwnerAvatar"
+            nz-icon
+            nzType="team"
+            nzTheme="outline"
+            class="public-unit-icon"
+            nz-tooltip
+            [nzTooltipTitle]="'Public computing unit — shared by everyone'"></i>
+          <ng-template #unitOwnerAvatar>
+            <texera-user-avatar
+              [avatar]="unit.ownerAvatar"
+              userColor="grey"
+              [userName]="unit.ownerName || ''"
+              [style.transform]="'scale(0.65)'"
+              [style.opacity]="0.7">
+            </texera-user-avatar>
+          </ng-template>
           <div class="computing-unit-name">
             <nz-badge
               [nzColor]="getBadgeColor(unit.status)"
@@ -217,6 +237,16 @@
               nz-tooltip
               [nzTooltipTitle]="unit.computingUnit.uri">
               {{ unit.computingUnit.name }}
+              <nz-tag
+                *ngIf="unit.computingUnit.accessScope === 'PUBLIC'"
+                nzColor="blue"
+                class="public-unit-tag"
+                nz-tooltip
+                [nzTooltipTitle]="
+                  'Shared with everyone. Runs one workflow at a time; the rest wait in a queue, taking turns between users.'
+                "
+                >Public</nz-tag
+              >
               <span
                 *ngIf="unit.status === 'Pending'"
                 class="unit-status-indicator"
@@ -258,7 +288,7 @@
             nz-icon
             nzType="share-alt"
             nz-tooltip
-            *ngIf="this.config.env.sharingComputingUnitEnabled"
+            *ngIf="this.config.env.sharingComputingUnitEnabled && unit.computingUnit.accessScope !== 'PUBLIC'"
             [nzTooltipTitle]="'Share computing unit'"
             (click)="onClickOpenShareAccess(unit.computingUnit.cuid); $event.stopPropagation()"
             role="button"

@@ -93,6 +93,7 @@ function makeComputingUnit(
       terminateTime: undefined,
       type,
       uri,
+      accessScope: "PRIVATE",
       resource: {
         cpuLimit: "1",
         memoryLimit: "1Gi",

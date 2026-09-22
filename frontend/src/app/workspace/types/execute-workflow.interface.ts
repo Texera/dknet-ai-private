@@ -160,6 +160,9 @@ export function isNotInExecution(state: ExecutionState) {
 
 export enum ExecutionState {
   Uninitialized = "Uninitialized",
+  // Waiting for a public computing unit, which runs one workflow at a time. There is no engine
+  // yet: this state comes from the unit's queue, not from the execution itself.
+  Queued = "Queued",
   Initializing = "Initializing",
   Running = "Running",
   Pausing = "Pausing",
@@ -181,6 +184,12 @@ export type ExecutionStateInfo = Readonly<
         | ExecutionState.Running
         | ExecutionState.Resuming
         | ExecutionState.Recovering;
+    }
+  | {
+      state: ExecutionState.Queued;
+      /** 1-based place in the computing unit's queue. */
+      position: number;
+      queueLength: number;
     }
   | {
       state: ExecutionState.Paused;

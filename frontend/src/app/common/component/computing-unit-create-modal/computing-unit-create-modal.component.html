@@ -242,6 +242,20 @@
             class="unit-uri-input" />
         </div>
       </ng-container>
+
+      <div
+        *ngIf="canCreatePublicUnit"
+        class="select-unit name-field">
+        <label
+          nz-checkbox
+          [(ngModel)]="createAsPublic">
+          Make this a public computing unit
+        </label>
+        <span class="public-unit-hint">
+          Every user can run on it. It runs one workflow at a time and the rest wait in a queue, taking turns between
+          users.
+        </span>
+      </div>
     </div>
   </ng-template>
   <ng-template #addComputeUnitModalFooter>

@@ -110,6 +110,7 @@ describe("UserComputingUnitComponent", () => {
           terminateTime: undefined,
           type: "kubernetes",
           uri: `uri-${cuid}`,
+          accessScope: "PRIVATE",
           resource: {
             cpuLimit: "1",
             memoryLimit: "1Gi",
@@ -220,6 +221,7 @@ describe("UserComputingUnitComponent", () => {
           terminateTime: undefined,
           type: "kubernetes",
           uri: `uri-${cuid}`,
+          accessScope: "PRIVATE",
           resource: {
             cpuLimit: "1",
             memoryLimit: "1Gi",

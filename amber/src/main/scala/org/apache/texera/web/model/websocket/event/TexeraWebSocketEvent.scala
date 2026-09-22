@@ -31,6 +31,7 @@ import org.apache.texera.web.model.websocket.response.{HeartBeatResponse, Modify
     new Type(value = classOf[HeartBeatResponse]),
     new Type(value = classOf[WorkflowErrorEvent]),
     new Type(value = classOf[WorkflowStateEvent]),
+    new Type(value = classOf[WorkflowQueueStatusEvent]),
     new Type(value = classOf[OperatorStatisticsUpdateEvent]),
     new Type(value = classOf[WebResultUpdateEvent]),
     new Type(value = classOf[ConsoleUpdateEvent]),

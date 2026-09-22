@@ -22,7 +22,7 @@ import org.apache.texera.dao.jooq.generated.Tables.{
   COMPUTING_UNIT_USER_ACCESS,
   WORKFLOW_COMPUTING_UNIT
 }
-import org.apache.texera.dao.jooq.generated.enums.PrivilegeEnum
+import org.apache.texera.dao.jooq.generated.enums.{ComputingUnitAccessScopeEnum, PrivilegeEnum}
 import org.jooq.DSLContext
 
 object ComputingUnitAccess {
@@ -35,7 +35,12 @@ object ComputingUnitAccess {
     // At most one row: cuid is the PK of workflow_computing_unit and (cuid, uid)
     // is the PK of computing_unit_user_access, so the left join cannot fan out.
     val record = context
-      .select(WORKFLOW_COMPUTING_UNIT.UID, COMPUTING_UNIT_USER_ACCESS.PRIVILEGE)
+      .select(
+        WORKFLOW_COMPUTING_UNIT.UID,
+        COMPUTING_UNIT_USER_ACCESS.PRIVILEGE,
+        WORKFLOW_COMPUTING_UNIT.ACCESS_SCOPE,
+        WORKFLOW_COMPUTING_UNIT.TERMINATE_TIME
+      )
       .from(WORKFLOW_COMPUTING_UNIT)
       .leftJoin(COMPUTING_UNIT_USER_ACCESS)
       .on(
@@ -48,10 +53,26 @@ object ComputingUnitAccess {
 
     if (record == null) {
       PrivilegeEnum.NONE // no such unit
+    } else if (isLivePublicUnit(record.value3(), record.value4())) {
+      // A public unit is offered to everyone, so every authenticated user gets WRITE without a
+      // computing_unit_user_access row. Checked ahead of ownership only because the outcome is
+      // the same for the administrator who created it.
+      PrivilegeEnum.WRITE
     } else if (record.value1().equals(uid)) {
       PrivilegeEnum.WRITE // owner
     } else {
       Option(record.value2()).getOrElse(PrivilegeEnum.NONE)
     }
   }
+
+  /**
+    * Whether this unit is public and still alive. A terminated public unit grants nothing: its
+    * row outlives the pod, and the blanket WRITE would otherwise keep routing every user at an
+    * address that no longer serves them.
+    */
+  private def isLivePublicUnit(
+      accessScope: ComputingUnitAccessScopeEnum,
+      terminateTime: java.sql.Timestamp
+  ): Boolean =
+    accessScope == ComputingUnitAccessScopeEnum.PUBLIC && terminateTime == null
 }

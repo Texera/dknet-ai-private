@@ -138,11 +138,14 @@ class PythonUdfUiParameterSupportSpec
   }
 
   // The in-pod mount manager, given the root the chart passes to each computing-unit pod.
+  // These cases only resolve paths, never mount, so the identity a mount would be authorized
+  // as is irrelevant here.
   private val podMounts = new RepositoryMountManager(
     Map(EnvironmentalVariable.ENV_MOUNT_IN_POD_ROOT -> "/mnt/texera-mounts").get,
     (_, _, _) => (),
     _ => false,
-    0
+    0,
+    () => "unused-in-these-tests"
   )
 
   private def udfWith(parameters: UiUDFParameter*): PythonUDFOpDescV2 = {

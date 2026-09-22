@@ -295,6 +295,43 @@ describe("ExecuteWorkflowService", () => {
     expect(result).toEqual({ state: ExecutionState.Running });
   });
 
+  it("handleExecutionEvent carries the queue position into the Queued state", () => {
+    const result = service.handleExecutionEvent({
+      type: "WorkflowQueueStatusEvent",
+      queued: true,
+      position: 3,
+      queueLength: 5,
+    });
+    expect(result).toEqual({ state: ExecutionState.Queued, position: 3, queueLength: 5 });
+  });
+
+  // Leaving the queue is not a state of its own: the run was either admitted, and the
+  // execution's own events take over, or cancelled, which the kill path reported.
+  it("handleExecutionEvent ignores a queue event once the run leaves the queue", () => {
+    const result = service.handleExecutionEvent({
+      type: "WorkflowQueueStatusEvent",
+      queued: false,
+      position: 0,
+      queueLength: 0,
+    });
+    expect(result).toBeUndefined();
+  });
+
+  // The position only ever arrives on WorkflowQueueStatusEvent, so a bare state event saying
+  // "Queued" cannot be turned into a Queued state -- it would have no number to show.
+  it("handleExecutionEvent ignores a bare Queued workflow state event", () => {
+    const result = service.handleExecutionEvent({ type: "WorkflowStateEvent", state: ExecutionState.Queued });
+    expect(result).toBeUndefined();
+  });
+
+  // A queued run's plan was submitted when Run was pressed, so editing it while it waits would
+  // not change what eventually runs.
+  it("locks workflow modification while queued", () => {
+    const disableSpy = vi.spyOn(service["workflowActionService"], "disableWorkflowModification");
+    (service as any).updateExecutionState({ state: ExecutionState.Queued, position: 1, queueLength: 2 });
+    expect(disableSpy).toHaveBeenCalled();
+  });
+
   it("handleExecutionEvent maps RecoveryStartedEvent to the Recovering state", () => {
     const result = service.handleExecutionEvent({ type: "RecoveryStartedEvent" });
     expect(result).toEqual({ state: ExecutionState.Recovering });

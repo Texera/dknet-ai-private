@@ -32,18 +32,20 @@ class RepositoryMountManagerSpec extends AnyFlatSpec with Matchers {
   private val locator = "dataset-1:abc123"
   private val inPodPath = Paths.get("/mnt/texera-mounts/dataset-1/abc123")
 
+  // The JWT is deliberately absent here: it is no longer a property of the pod but of the run,
+  // and reaches the manager through its own supplier (see the userToken parameter).
   private val podEnv = Map(
     EnvironmentalVariable.ENV_MOUNT_IN_POD_ROOT -> "/mnt/texera-mounts",
     EnvironmentalVariable.ENV_ACCESS_CONTROL_SERVICE_URL -> "http://access-control-service-svc:9096",
-    EnvironmentalVariable.ENV_CU_ID -> "7",
-    EnvironmentalVariable.ENV_USER_JWT_TOKEN -> "user-jwt"
+    EnvironmentalVariable.ENV_CU_ID -> "7"
   )
 
   private class Fixture(
       env: Map[String, String] = podEnv,
       mountedAfterRequest: Boolean = true,
       alreadyMounted: Boolean = false,
-      timeoutMs: Long = 400
+      timeoutMs: Long = 400,
+      token: String = "user-jwt"
   ) {
     val requests: mutable.Buffer[(String, String, String)] = mutable.Buffer()
     private var mounted = alreadyMounted
@@ -55,7 +57,8 @@ class RepositoryMountManagerSpec extends AnyFlatSpec with Matchers {
         if (mountedAfterRequest) mounted = true
       },
       (_: Path) => mounted,
-      timeoutMs
+      timeoutMs,
+      () => token
     )
   }
 
@@ -106,13 +109,27 @@ class RepositoryMountManagerSpec extends AnyFlatSpec with Matchers {
     Seq(
       EnvironmentalVariable.ENV_MOUNT_IN_POD_ROOT,
       EnvironmentalVariable.ENV_ACCESS_CONTROL_SERVICE_URL,
-      EnvironmentalVariable.ENV_CU_ID,
-      EnvironmentalVariable.ENV_USER_JWT_TOKEN
+      EnvironmentalVariable.ENV_CU_ID
     ).foreach { missing =>
       val fixture = new Fixture(env = podEnv - missing)
       val failure = the[IllegalStateException] thrownBy fixture.manager.ensureMounted(locator)
       failure.getMessage should include(missing)
       fixture.requests shouldBe empty
     }
+  }
+
+  // Mounting with no identity would fall to the access-control service to refuse; failing here
+  // keeps a public unit from ever asking for a mount that belongs to nobody.
+  it should "refuse to mount when no identity is available for the run" in {
+    val fixture = new Fixture(token = "")
+    val failure = the[IllegalStateException] thrownBy fixture.manager.ensureMounted(locator)
+    failure.getMessage should include(EnvironmentalVariable.ENV_USER_JWT_TOKEN)
+    fixture.requests shouldBe empty
+  }
+
+  it should "authorize the mount as the run's user rather than the pod" in {
+    val fixture = new Fixture(token = "run-jwt")
+    fixture.manager.ensureMounted(locator)
+    fixture.requests.map(_._3) shouldBe Seq("run-jwt")
   }
 }

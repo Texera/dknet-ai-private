@@ -576,4 +576,16 @@ class ComputingUnitManagingResourceSpec
     ComputingUnitManagingResource.optionalComputingUnitEnv(_ => Some("  ")) shouldBe empty
   }
 
+  // A unit decides for itself whether a run has to queue, so it needs the feature flag in its own
+  // environment. Set only on this service, a public unit reads the feature as off and runs every
+  // workflow straight away -- which is the behaviour public units exist to replace, and it fails
+  // silently. Forwarding it is what makes the queue engage at all.
+  it should "forward the public computing unit settings to the unit" in {
+    val env = Map(
+      EnvironmentalVariable.ENV_COMPUTING_UNIT_PUBLIC_ENABLED -> "true",
+      EnvironmentalVariable.ENV_COMPUTING_UNIT_PUBLIC_MAX_RUN_SECONDS -> "3600"
+    )
+    ComputingUnitManagingResource.optionalComputingUnitEnv(env.get) shouldBe env
+  }
+
 }

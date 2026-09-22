@@ -43,7 +43,11 @@ class RepositoryMountManager(
     env: String => Option[String],
     post: (String, String, String) => Unit,
     isMounted: Path => Boolean,
-    mountTimeoutMs: Long
+    mountTimeoutMs: Long,
+    // The identity to authorize a mount as. Separate from `env` because it is no longer a
+    // property of the pod: a public computing unit has no user of its own, and each run must be
+    // authorized as whoever started it.
+    userToken: () => String
 ) extends LazyLogging {
 
   private val mapper = new ObjectMapper()
@@ -101,15 +105,23 @@ class RepositoryMountManager(
         return mountPoint
       }
 
-      val Seq(accessControlService, cuid, jwt) = Seq(
+      val Seq(accessControlService, cuid) = Seq(
         EnvironmentalVariable.ENV_ACCESS_CONTROL_SERVICE_URL,
-        EnvironmentalVariable.ENV_CU_ID,
-        EnvironmentalVariable.ENV_USER_JWT_TOKEN
+        EnvironmentalVariable.ENV_CU_ID
       ).map(name =>
         env(name).map(_.trim).filter(_.nonEmpty).getOrElse {
           throw new IllegalStateException(s"$name is not set in this computing unit.")
         }
       )
+
+      // The run's own identity, not the pod's. UserTokenProvider falls back to the pod variable
+      // for a private unit, so this is the same token as before there.
+      val jwt = Option(userToken()).map(_.trim).filter(_.nonEmpty).getOrElse {
+        throw new IllegalStateException(
+          s"${EnvironmentalVariable.ENV_USER_JWT_TOKEN} is not set in this computing unit, and " +
+            "no user is registered for the current run."
+        )
+      }
 
       val body = mapper.createObjectNode()
       body.put("repositoryName", repository)
@@ -138,7 +150,8 @@ object RepositoryMountManager
       name => sys.env.get(name),
       InPodMount.postJson,
       InPodMount.isFuseMounted,
-      35000
+      35000,
+      () => UserTokenProvider.token
     )
 
 private object InPodMount {

@@ -408,3 +408,48 @@
   font-weight: normal;
   color: rgba(0, 0, 0, 0.45);
 }
+
+// ── Public computing units ────────────────────────────────────────────────────
+// A public unit is a different kind of thing from a personal one: it belongs to
+// the deployment rather than to a user, everyone shares it, and it runs one
+// workflow at a time. The accent bar and tint mark it apart at a glance, so it
+// is never mistaken for one of the user's own units in a list of them.
+.computing-unit-option.unit-public {
+  position: relative;
+  background: rgb(24 144 255 / 5%);
+  border-left: 3px solid #1890ff;
+
+  &:hover {
+    background: rgb(24 144 255 / 10%);
+  }
+
+  // The left bar replaces the flush edge, so pull the row back to keep every
+  // unit's name on the same vertical line whether it is public or not.
+  .computing-unit-row {
+    padding-left: 9px;
+  }
+}
+
+// Stands in for the owner avatar, which a public unit has no meaningful value for.
+.public-unit-icon {
+  flex: 0 0 auto;
+  width: 18px;
+  font-size: 15px;
+  color: #1890ff;
+  text-align: center;
+}
+
+// Deliberately just "Public": the row is narrow, and "Public · queued" was truncated to
+// "Public · q…", which reads as broken rather than informative. The accent bar and team icon
+// already mark the unit apart; the tooltip explains the queue.
+.public-unit-tag {
+  flex: 0 0 auto;
+  margin-left: 6px;
+  font-size: 11px;
+  line-height: 16px;
+}
+
+// Matches the dropdown row for the unit currently connected.
+.button-content-public .public-unit-icon {
+  padding-right: 4px;
+}

@@ -40,6 +40,7 @@ export interface GuiConfig {
   defaultExecutionMode: ExecutionMode;
   workflowEmailNotificationEnabled: boolean;
   sharingComputingUnitEnabled: boolean;
+  publicComputingUnitEnabled: boolean;
   warehouseEnabled: boolean;
   operatorConsoleMessageBufferSize: number;
   defaultLocalUser?: { username?: string; password?: string };

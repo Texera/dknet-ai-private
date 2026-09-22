@@ -17,28 +17,14 @@
  * under the License.
  */
 
-package org.apache.texera.web.storage
-
-import org.apache.texera.amber.core.storage.result.WorkflowResultStore
+package org.apache.texera.amber.core.storage.model
 
 /**
-  * Where a workflow stands in its computing unit's run queue, between pressing Run and the
-  * execution actually starting. Lives here, across executions, because at this point there is no
-  * execution to hang it off: an ExecutionStateStore is created only once the run is admitted.
+  * The file service refused this read for the user the run is acting as.
+  *
+  * Distinct from every other read failure because it must not be retried against the storage
+  * backend directly: the fallback path uses the deployment's own credentials, which would hand
+  * back exactly the bytes the refusal withheld. Readers catch the general case and fall back;
+  * this one is rethrown.
   */
-case class WorkflowQueueStore(
-    queued: Boolean = false,
-    position: Int = 0,
-    queueLength: Int = 0
-)
-
-// states that across executions.
-class WorkflowStateStore {
-  val resultStore = new StateStore(WorkflowResultStore())
-  val queueStore = new StateStore(WorkflowQueueStore())
-
-  def getAllStores: Iterable[StateStore[_]] = {
-    Iterable(resultStore, queueStore)
-  }
-
-}
+class FileAccessDeniedException(message: String) extends RuntimeException(message)

@@ -60,6 +60,7 @@ function makeEntry(overrides: Partial<DashboardWorkflowComputingUnit> = {}): Das
       terminateTime: undefined,
       type: "local",
       uri: "",
+      accessScope: "PRIVATE",
       resource: {
         cpuLimit: "1",
         memoryLimit: "1Gi",

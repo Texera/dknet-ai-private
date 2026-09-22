@@ -33,6 +33,8 @@ export const COMPUTING_UNIT_BASE_URL = "computing-unit";
 export const COMPUTING_UNIT_CREATE_URL = `${COMPUTING_UNIT_BASE_URL}/create`;
 export const COMPUTING_UNIT_LIST_URL = `${COMPUTING_UNIT_BASE_URL}`;
 export const COMPUTING_UNIT_TYPES_URL = `${COMPUTING_UNIT_BASE_URL}/types`;
+// ADMIN-only. Separate from /create so a regular user has no route to a public unit at all.
+export const COMPUTING_UNIT_CREATE_PUBLIC_URL = `${COMPUTING_UNIT_BASE_URL}/admin/public`;
 
 @Injectable({
   providedIn: "root",
@@ -85,14 +87,18 @@ export class WorkflowComputingUnitManagingService {
     shmSize: string,
     uri: string,
     unitType: "kubernetes" | "local",
-    iid?: number
+    iid?: number,
+    isPublic = false
   ): Observable<DashboardWorkflowComputingUnit> {
     // iid is left out when no curated image was chosen, so the unit runs the deployment's
     // own image exactly as before.
     const body = { name, cpuLimit, memoryLimit, gpuLimit, jvmMemorySize, shmSize, uri, unitType, iid };
+    // The scope is the endpoint, not a field in the body: the backend refuses to read a scope
+    // from /create at all, so a forged body cannot produce a public unit.
+    const url = isPublic ? COMPUTING_UNIT_CREATE_PUBLIC_URL : COMPUTING_UNIT_CREATE_URL;
 
     return this.http
-      .post<DashboardWorkflowComputingUnit>(`${AppSettings.getApiEndpoint()}/${COMPUTING_UNIT_CREATE_URL}`, body)
+      .post<DashboardWorkflowComputingUnit>(`${AppSettings.getApiEndpoint()}/${url}`, body)
       .pipe(map(raw => this.parseDashboardUnit(raw)));
   }
 
@@ -114,7 +120,8 @@ export class WorkflowComputingUnitManagingService {
     gpuLimit: string,
     jvmMemorySize: string,
     shmSize: string,
-    iid?: number
+    iid?: number,
+    isPublic = false
   ): Observable<DashboardWorkflowComputingUnit> {
     return this.createComputingUnit(
       name,
@@ -125,7 +132,8 @@ export class WorkflowComputingUnitManagingService {
       shmSize,
       "",
       "kubernetes",
-      iid
+      iid,
+      isPublic
     );
   }
 
@@ -136,8 +144,12 @@ export class WorkflowComputingUnitManagingService {
    * @param uri The URI of the local computing unit.
    * @returns An Observable of the created WorkflowComputingUnit.
    */
-  public createLocalComputingUnit(name: string, uri: string): Observable<DashboardWorkflowComputingUnit> {
-    return this.createComputingUnit(name, "NaN", "NaN", "NaN", "NaN", "NaN", uri, "local");
+  public createLocalComputingUnit(
+    name: string,
+    uri: string,
+    isPublic = false
+  ): Observable<DashboardWorkflowComputingUnit> {
+    return this.createComputingUnit(name, "NaN", "NaN", "NaN", "NaN", "NaN", uri, "local", undefined, isPublic);
   }
 
   /**

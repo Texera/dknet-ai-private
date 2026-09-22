@@ -28,6 +28,13 @@ export interface WorkflowComputingUnitResourceLimit {
 
 export type WorkflowComputingUnitType = "local" | "kubernetes";
 
+/**
+ * Who may use a unit. Orthogonal to its type: a public unit is still local or kubernetes.
+ * A public unit is created by an administrator, offered to everyone, and runs one workflow at a
+ * time with the rest queued.
+ */
+export type ComputingUnitAccessScope = "PRIVATE" | "PUBLIC";
+
 export interface WorkflowComputingUnit {
   cuid: number;
   uid: number;
@@ -37,6 +44,7 @@ export interface WorkflowComputingUnit {
   type: WorkflowComputingUnitType;
   uri: string;
   resource: WorkflowComputingUnitResourceLimit;
+  accessScope: ComputingUnitAccessScope;
 }
 
 export interface WorkflowComputingUnitMetrics {

@@ -163,6 +163,11 @@ object EnvironmentalVariable {
   val ENV_MAX_WORKFLOW_WEBSOCKET_REQUEST_PAYLOAD_SIZE_KB =
     "MAX_WORKFLOW_WEBSOCKET_REQUEST_PAYLOAD_SIZE_KB"
 
+  // Public computing units. A unit only queues if it knows the feature is on, so these have to
+  // reach the unit's own pod, not just the services that create it.
+  val ENV_COMPUTING_UNIT_PUBLIC_ENABLED = "COMPUTING_UNIT_PUBLIC_ENABLED"
+  val ENV_COMPUTING_UNIT_PUBLIC_MAX_RUN_SECONDS = "COMPUTING_UNIT_PUBLIC_MAX_RUN_SECONDS"
+
   // Fault Tolerance
   val ENV_FAULT_TOLERANCE_LOG_STORAGE_URI = "FAULT_TOLERANCE_LOG_STORAGE_URI"
   val ENV_FAULT_TOLERANCE_LOG_FLUSH_INTERVAL_MS = "FAULT_TOLERANCE_LOG_FLUSH_INTERVAL_MS"
