@@ -1589,6 +1589,27 @@ describe("WorkflowFormComponent", () => {
       expect(component.runButtonState).toEqual({ label: "Stop", icon: "stop", disabled: false });
     });
 
+    // A public computing unit runs one workflow at a time. "Stop" alone would hide that the run
+    // has not started, and give no sense of the wait -- so the queue gets its own label here, as
+    // it does on the canvas.
+    it("shows the queue position while waiting for a public unit", () => {
+      build(formViewWorkflow).ngOnInit();
+      h.executionStateStream.next({ current: { state: ExecutionState.Queued, position: 2, queueLength: 3 } });
+
+      expect(component.runButtonState).toEqual({ label: "Queued 2/3", icon: "clock-circle", disabled: false });
+      // Still in flight as far as isRunning goes, which is what makes the button cancel it.
+      expect(component.isRunning).toBe(true);
+      expect(component.runNote).toContain("2 of 3");
+    });
+
+    it("says Queued without numbers before a position is known", () => {
+      build(formViewWorkflow).ngOnInit();
+      h.executionStateStream.next({ current: { state: ExecutionState.Queued, position: 0, queueLength: 0 } });
+
+      expect(component.runButtonState.label).toBe("Queued");
+      expect(component.runNote).toContain("one workflow at a time");
+    });
+
     it("disables and says Invalid for a broken graph", () => {
       build(formViewWorkflow).ngOnInit();
       makeReady();

@@ -191,6 +191,9 @@ export class WorkflowFormComponent implements OnInit, OnDestroy {
    */
   public executionDuration = 0;
   public executionState: ExecutionState = ExecutionState.Uninitialized;
+  // Place in a public computing unit's queue, shown on the run button while waiting.
+  public queuePosition = 0;
+  public queueLength = 0;
   public runError = "";
   /** The picked unit's connection state, mirrored from the same stream the operator canvas reads,
    *  so "Connecting" here means exactly what it means there. */
@@ -451,6 +454,10 @@ export class WorkflowFormComponent implements OnInit, OnDestroy {
       .subscribe(({ current }) => {
         const wasRunning = this.isRunning;
         this.executionState = current.state;
+        if (current.state === ExecutionState.Queued) {
+          this.queuePosition = current.position;
+          this.queueLength = current.queueLength;
+        }
         // Reconcile the lock with the new state. The execute service flips the lock BEFORE it emits
         // the state (updateWorkflowActionLock runs first in updateExecutionState), so when a run ends
         // the clamp below still saw "running" and locked the graph again; this is where edit mode
@@ -1539,6 +1546,16 @@ export class WorkflowFormComponent implements OnInit, OnDestroy {
    * "Connecting" and disables its run button. Read from the exact condition the canvas uses
    * (menu.component's getRunButtonBehavior), so the two stay in step.
    */
+  /** What the note under the run button should say while something is in flight. */
+  public get runNote(): string {
+    if (this.executionState === ExecutionState.Queued) {
+      return this.queueLength > 1
+        ? `Waiting for the computing unit -- ${this.queuePosition} of ${this.queueLength} in the queue. It starts on its own.`
+        : "Waiting for the computing unit -- it runs one workflow at a time. Yours starts on its own.";
+    }
+    return "Running -- this keeps going if you look away.";
+  }
+
   public get isConnecting(): boolean {
     return (
       this.computingUnitStatus !== ComputingUnitState.NoComputingUnit && !this.workflowWebsocketService.isConnected
@@ -1578,6 +1595,16 @@ export class WorkflowFormComponent implements OnInit, OnDestroy {
     // button (as the canvas does) rather than offering a kill that cannot be delivered.
     if (this.isConnecting) {
       return { label: "Connecting", icon: "loading", disabled: true };
+    }
+    // Before the Stop branch: a queued run is in flight as far as isRunning is concerned, which
+    // is what makes this button cancel it, but labelling it "Stop" would hide that the run has
+    // not started and give no sense of the wait.
+    if (this.executionState === ExecutionState.Queued) {
+      return {
+        label: this.queueLength > 0 ? `Queued ${this.queuePosition}/${this.queueLength}` : "Queued",
+        icon: "clock-circle",
+        disabled: false,
+      };
     }
     if (this.isRunning) {
       return { label: "Stop", icon: "stop", disabled: false };
