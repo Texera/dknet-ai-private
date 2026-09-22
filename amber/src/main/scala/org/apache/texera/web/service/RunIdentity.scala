@@ -23,6 +23,8 @@ import com.typesafe.scalalogging.LazyLogging
 import org.apache.texera.amber.core.storage.UserTokenProvider
 import org.apache.texera.auth.JwtAuth
 import org.apache.texera.auth.JwtAuth.jwtClaims
+import org.apache.texera.dao.SqlServer
+import org.apache.texera.dao.jooq.generated.tables.daos.UserDao
 import org.apache.texera.dao.jooq.generated.tables.pojos.User
 
 /**
@@ -51,10 +53,40 @@ object RunIdentity extends LazyLogging {
   /** Register the supplier once, at start-up. */
   def install(): Unit = UserTokenProvider.setSupplier(() => currentToken)
 
-  /** The run that is now under way belongs to this user. */
+  /**
+    * The run that is now under way belongs to this user.
+    *
+    * The row is re-read from the database rather than used as handed in. In a Kubernetes
+    * deployment the session user is built from the headers the access-control service sets --
+    * uid, name and email, and no role -- so minting from it produces a token whose `role` claim
+    * is null. JwtParser reads that claim with `UserRoleEnum.valueOf`, which throws on null, so
+    * every service rejects the token with 401 and the run cannot read its own datasets.
+    */
   def setCurrentUser(user: Option[User]): Unit = {
-    currentUser = user
-    user.foreach(u => logger.info(s"computing unit is now acting as user ${u.getUid}"))
+    currentUser = user.map(resolveFromDatabase)
+    currentUser.foreach(u =>
+      logger.info(s"computing unit is now acting as user ${u.getUid} (role ${u.getRole})")
+    )
+  }
+
+  /** The stored row for this user, or the one handed in if it cannot be read. */
+  private def resolveFromDatabase(user: User): User = {
+    try {
+      val dao = new UserDao(SqlServer.getInstance().createDSLContext().configuration())
+      Option(dao.fetchOneByUid(user.getUid)) match {
+        case Some(row) => row
+        case None =>
+          logger.error(
+            s"no user row for uid ${user.getUid}; the run's token will carry whatever the " +
+              "session provided and may be refused"
+          )
+          user
+      }
+    } catch {
+      case t: Throwable =>
+        logger.error(s"could not read the user row for uid ${user.getUid}", t)
+        user
+    }
   }
 
   /** The run finished; stop acting as anyone. */

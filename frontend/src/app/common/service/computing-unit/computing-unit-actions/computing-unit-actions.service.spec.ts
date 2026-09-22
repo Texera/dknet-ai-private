@@ -117,6 +117,23 @@ describe("ComputingUnitActionsService", () => {
       );
     });
 
+    // A public unit is still started from a chosen image; the two travel independently, so the
+    // admin creation flow offers the same image picker as the ordinary one.
+    it("passes a curated image and isPublic together", () => {
+      service.create({ ...baseRequest, type: "kubernetes", imageId: 7, isPublic: true });
+
+      expect(computingUnitService.createKubernetesBasedComputingUnit).toHaveBeenCalledWith(
+        "unit",
+        "2",
+        "4G",
+        "1",
+        "1G",
+        "64M",
+        7,
+        true
+      );
+    });
+
     it("passes isPublic through for a local request", () => {
       service.create({ ...baseRequest, type: "local", isPublic: true });
 

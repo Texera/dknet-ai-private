@@ -147,6 +147,16 @@ private[storage] class LakeFSFileDocument(uri: URI, val resourceType: ResourceTy
           responseCode == HttpURLConnection.HTTP_UNAUTHORIZED ||
           responseCode == HttpURLConnection.HTTP_FORBIDDEN
         ) {
+          // Logged, not just thrown: this is the one read failure that does not fall back, so
+          // without a line here the only symptom is an operator further downstream reporting
+          // that no schema is available, with nothing saying why.
+          logger.error(
+            s"$presignEndpoint refused the request for ${getFileRelativePath()} in " +
+              s"${getRepositoryName()} with HTTP $responseCode. Reading it directly would use " +
+              "this deployment's own credentials and return what the refusal withheld, so the " +
+              "read fails instead. A 401 usually means the run's token was rejected rather " +
+              "than that the user lacks access."
+          )
           throw new FileAccessDeniedException(
             s"Not authorized to read ${getFileRelativePath()} from ${getRepositoryName()} " +
               s"(HTTP $responseCode)."
