@@ -46,16 +46,16 @@
 #
 # Build (context is this directory; nothing from the repository tree is needed):
 #   docker build -f computing-unit-alphafold3.dockerfile \
-#     --build-arg BASE_IMAGE=texera-local/computing-unit-master:staging \
+#     --build-arg BASE_IMAGE=texera-local/texera-workflow-execution-coordinator:dev \
 #     -t texera/computing-unit-master:alpha3-amd64 .
 #
 # The GPU variant, for structure prediction on an NVIDIA node, differs only in jax:
 #   docker build -f computing-unit-alphafold3.dockerfile \
-#     --build-arg BASE_IMAGE=texera-local/computing-unit-master:staging \
+#     --build-arg BASE_IMAGE=texera-local/texera-workflow-execution-coordinator:dev \
 #     --build-arg JAX_EXTRA="[cuda12]" \
 #     -t texera/computing-unit-master:alpha3-cuda-amd64 .
 
-ARG BASE_IMAGE=texera-local/computing-unit-master:staging
+ARG BASE_IMAGE=texera-local/texera-workflow-execution-coordinator:dev
 FROM ${BASE_IMAGE}
 
 USER root
@@ -165,7 +165,9 @@ RUN chmod -R a+rX /opt/alphafold3
 
 USER texera
 
-# Inherited from the base image, restated because the platform reads it: an image
-# whose start command does not name `computing-unit-master` is refused at
-# registration as not being a computing-unit image.
-CMD ["bin/computing-unit-master"]
+# No CMD here on purpose: the base image's start command is inherited, and in this
+# fork that command wraps the engine in a ttyd terminal
+# (bin/dockerfiles/computing-unit-master.dockerfile). Restating the plain
+# `bin/computing-unit-master` would silently drop the in-browser terminal from
+# every AlphaFold unit. The inherited command still names `computing-unit-master`,
+# which is what curated-image registration checks for.

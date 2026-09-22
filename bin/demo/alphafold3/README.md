@@ -57,16 +57,40 @@ inside a Texera workflow, searching a database delivered as a mounted model vers
 
 ## Build the image
 
-A curated image is resolved from a registry by the platform, not from a local Docker
-daemon, so it has to be pushed somewhere public:
+```bash
+docker build -f bin/dockerfiles/computing-unit-alphafold3.dockerfile \
+  --build-arg BASE_IMAGE=texera-local/texera-workflow-execution-coordinator:dev \
+  -t texera-local/texera-workflow-execution-coordinator:alpha3 .
+```
+
+Build context is the repository root, and the base image is this fork's engine image
+(`bin/dockerfiles/computing-unit-master.dockerfile` builds it under that name).
+
+### Registering it, and why a local build cannot be registered
+
+A curated image is resolved **from a registry** by the platform, never from a local
+Docker daemon. Registration runs a Kubernetes Job that does
+`skopeo inspect docker://<ref>` from inside the cluster, and a unit created from a
+curated image then runs the **digest** reference `repo@sha256:…`, which kubelet cannot
+satisfy from a locally tagged image even with `IfNotPresent`. So to use the curated-image
+path the image has to be pushed somewhere the cluster can reach over HTTPS:
 
 ```bash
-cd bin/dockerfiles
-docker build -f computing-unit-alphafold3.dockerfile \
-  --build-arg BASE_IMAGE=texera-local/computing-unit-master:staging \
-  -t texera/computing-unit-master:alpha3-amd64 .
-docker push texera/computing-unit-master:alpha3-amd64
+docker tag  texera-local/texera-workflow-execution-coordinator:alpha3 <you>/cu-alphafold3:1.0
+docker push <you>/cu-alphafold3:1.0      # then register <you>/cu-alphafold3:1.0
 ```
+
+On a laptop, where pushing several GB is the slow part, the alternative is to make the
+**pool** image the AlphaFold image, which is referenced by tag rather than by digest:
+
+```bash
+helm upgrade texera bin/k8s -n texera-dev -f bin/k8s/values-local-minikube.yaml \
+  --set texera.imageTag=alpha3
+```
+
+Every unit is then an AlphaFold unit, including a public one, which is enough to run the
+demo below. What that does not reproduce is the negative control at the end of this file:
+the point that the image choice is load-bearing needs two different images in one cluster.
 
 The build fails rather than the workflow if anything is missing: a verification layer
 imports `alphafold3`, `jax`, `pyarrow`, checks `sys.version_info >= (3, 12)` and

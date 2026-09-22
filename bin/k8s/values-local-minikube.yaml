@@ -130,7 +130,7 @@ lakefs:
       s3:
         endpoint: http://texera-rustfs-svc:9000
         pre_signed_expiry: 15m
-        pre_signed_endpoint: http://MINIKUBE_NODE_IP:31000
+        pre_signed_endpoint: http://192.168.130.2:31000
         force_path_style: true
         credentials:
           access_key_id: texera_rustfs
