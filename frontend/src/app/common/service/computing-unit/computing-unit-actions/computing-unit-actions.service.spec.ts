@@ -43,6 +43,8 @@ describe("ComputingUnitActionsService", () => {
     gpu: "1",
     jvmMemorySize: "1G",
     shmSize: "64M",
+    // This fork pins a unit to a GPU model; "Any" is the create dialog's default.
+    gpuModel: "Any",
     localUri: "http://localhost:8080",
   };
 
@@ -82,6 +84,7 @@ describe("ComputingUnitActionsService", () => {
         "1",
         "1G",
         "64M",
+        "Any",
         // No curated image chosen, so the unit runs the deployment's own.
         undefined,
         // Private unless the request explicitly asks otherwise.
@@ -112,6 +115,7 @@ describe("ComputingUnitActionsService", () => {
         "1",
         "1G",
         "64M",
+        "Any",
         undefined,
         true
       );
@@ -129,6 +133,7 @@ describe("ComputingUnitActionsService", () => {
         "1",
         "1G",
         "64M",
+        "Any",
         7,
         true
       );

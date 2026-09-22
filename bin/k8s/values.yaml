@@ -329,6 +329,13 @@ configService:
     type: ClusterIP
     port: 9094
 
+# The CloudMapper microservice. Off by default: it needs AWS credentials and an SSH key
+# in Secrets that only bin/k8s/deploy_cloudmapper.sh creates, a `local-storage` storage
+# class, and an image from outside this repository. Set true on a deployment that has
+# been prepared by that script.
+cloudmapper:
+  enabled: false
+
 chatAssistantService:
   enabled: true
   name: chat-assistant-service
@@ -367,6 +374,10 @@ litellm:
   enabled: true
   name: litellm
   image: ghcr.io/berriai/litellm:main-latest
+  # Read by the postgresql init script, which creates this database when litellm is
+  # enabled. It was only defined in values-development.yaml, so a plain `values.yaml`
+  # install rendered `CREATE DATABASE ` and LiteLLM came up without a database.
+  databaseName: texera_litellm
   numOfPods: 1
   service:
     type: ClusterIP
@@ -424,6 +435,11 @@ workflowComputingUnitPool:
     cpu: 100
     memory: 100Gi
     nvidiaGpu: 5
+    # Per-model GPU resources, when the device plugin advertises one resource per
+    # model (e.g. nvidia.com/h100: 1). Empty keeps the single flat nvidia.com/gpu cap.
+    # The resource-quota template ranges over this; it was only defined under
+    # jupyterPool, so it silently never applied here.
+    gpuResources: {}
   imageName: texera-workflow-execution-coordinator
   service:
     port: 8085
@@ -574,6 +590,9 @@ pythonLanguageServer:
   name: python-language-server
   replicaCount: 1
   image: texera/pylsp:latest
+  # The deployment reads this; without it the pod spec carried an empty
+  # imagePullPolicy, which is not the chart's intent for a registry image.
+  imagePullPolicy: IfNotPresent
   imagePullSecret: regcred
   resources:
     limits:

@@ -1,3 +1,11 @@
+{{- /*
+  The CloudMapper microservice and its volume. Gated because it is not part of the
+  platform: it needs AWS credentials and an SSH key, in Secrets named `aws-secret`
+  and `ssh-key` that only bin/k8s/deploy_cloudmapper.sh creates, and its image lives
+  outside this repository. Ungated it left a Pending pod on every cluster that had
+  none of those, which also made `helm install --wait` time out.
+*/ -}}
+{{- if .Values.cloudmapper.enabled }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -88,3 +96,4 @@ spec:
       targetPort: 4000
   type: ClusterIP
 
+{{- end }}

@@ -15,44 +15,72 @@
 # specific language governing permissions and limitations
 # under the License.
 
-# Overlay for running the chart against images built straight into a local
-# minikube node's docker daemon (`eval $(minikube -p <profile> docker-env)`),
+# Overlay for running this chart on a local minikube node against images built
+# straight into that node's docker daemon (`eval $(minikube -p <profile> docker-env)`),
 # i.e. never pushed to a registry. Layer it on top of values.yaml:
 #
-#   helm install texera bin/k8s -f bin/k8s/values-local-minikube.yaml
+#   helm install texera bin/k8s -n texera-dev --create-namespace \
+#     -f bin/k8s/values-local-minikube.yaml
 #
-# Everything it changes follows from "the images exist only on the node":
-# a local registry/tag, and a pull policy that does not go looking for them.
+# Do not pass --wait: several optional components are switched off below rather than
+# removed, and a pod that never becomes Ready would hold the install open.
+#
+# Two things here are per-profile and must be re-checked when the profile changes:
+# the lakefs pre_signed_endpoint (the node IP) and nothing else. A stale node IP is
+# not a start-up failure -- the cluster comes up and uploads fail later, when the
+# browser follows a presigned URL.
 
 texera:
   imageRegistry: texera-local
   imageTag: dev
 
 texeraImages:
-  # Never try to pull: the images are already in the node's daemon, and a pull
-  # of texera-local/* would fail. This also drives the CU pods the manager
-  # creates and the CU-image prepuller.
+  # Never try to pull: the images are already in the node's daemon, and a pull of
+  # texera-local/* would fail. This also drives the pool's pre-pull DaemonSet.
   pullPolicy: IfNotPresent
 
 global:
-  # Required by Bitnami sub-charts (postgresql, minio) to allow custom images
+  # Required by the Bitnami postgresql sub-chart to allow a custom image (pgroonga).
   security:
     allowInsecureImages: true
 
-# Built from bin/dockerfiles/mounter.dockerfile into the node's daemon.
+# On, against the chart default. Mounting is what the AlphaFold demo is about -- a
+# workflow names a model and the engine mounts that LakeFS repository into the
+# computing unit rather than copying it -- so without this the AlphaFold MSA operator
+# has no sequence database to search. The default is off because a computing-unit pod
+# then carries a hostPath volume, which the `baseline` and `restricted` Pod Security
+# Standards forbid; minikube enforces neither, so opting in here is safe.
 mounter:
-  # On here, against the chart default. Mounting is what the demos are about -- a
-  # workflow names a model and the engine mounts that LakeFS repository into the
-  # computing unit rather than copying it -- so without this the AlphaFold operator
-  # has no sequence database to search. The default is off because a computing-unit
-  # pod then carries a hostPath volume, which the `baseline` and `restricted` Pod
-  # Security Standards forbid; minikube enforces neither, so opting in here is safe.
   enabled: true
   imagePullPolicy: IfNotPresent
 
-# No dockerfile for this in-tree, so there is nothing to build locally and the
-# published image does not live under the local registry name.
+# Components whose images have no dockerfile in this repository, or which need
+# external infrastructure. Each would otherwise sit in ImagePullBackOff or Pending.
 exampleDataLoader:
+  # No in-tree dockerfile, so the image does not exist under texera-local.
+  enabled: false
+chatAssistantService:
+  # No dockerfile and no source in this repository, and its Service template is an
+  # empty comment, so the Deployment is orphaned even when the image resolves.
+  enabled: false
+cloudmapper:
+  # Needs AWS credentials, an SSH key and a `local-storage` class. Already the
+  # default, restated here because it is the loudest failure on a laptop.
+  enabled: false
+notebookMigrationService:
+  # Pulls in two more images (jupyter + the migration service) that nothing in the
+  # AlphaFold path needs.
+  enabled: false
+
+# Both need real provider API keys to do anything. They start without them and then
+# fail every call, so leave them off unless you are working on the LLM features.
+agentService:
+  enabled: false
+litellm:
+  enabled: false
+
+metrics-server:
+  # minikube ships its own addon; two installs fight over the same APIService.
   enabled: false
 
 postgresql:
@@ -61,10 +89,11 @@ postgresql:
     tag: latest
     debug: true
   auth:
-    postgresPassword: root_password # for executing init script with superuser
+    # The init script that loads sql/texera_ddl.sql runs as the superuser.
+    postgresPassword: root_password
   primary:
     containerSecurityContext:
-      # groonga/pgroonga needs to write a lock/socket file to /var/run/postgresql
+      # groonga/pgroonga writes a lock/socket file into /var/run/postgresql.
       readOnlyRootFilesystem: false
     livenessProbe:
       initialDelaySeconds: 30
@@ -73,8 +102,9 @@ postgresql:
     persistence:
       enabled: true
       size: 10Gi
-      # minikube ships "standard" (k8s.io/minikube-hostpath); the chart's default
-      # "local-path" provisioner is not installed there, so its PVCs stay Pending.
+      # minikube installs only "standard" (k8s.io/minikube-hostpath). The chart
+      # defaults to "local-path", whose provisioner is absent there, so the claim
+      # would stay Pending.
       storageClass: standard
       existingClaim: "postgresql-data-pvc"
 
@@ -82,20 +112,16 @@ rustfs:
   persistence:
     enabled: true
     size: 20Gi
-    # Same reason as postgresql above: the chart defaults to "local-path", whose
-    # provisioner minikube does not install, so the claim would stay Pending and
-    # take the object store -- and therefore LakeFS -- down with it.
+    # Same reason as postgresql above. A Pending claim here takes the object store
+    # down, and with it LakeFS, the file service and the Iceberg warehouse.
     storageClass: standard
 
 lakefs:
   # Presigned upload/download URLs must name a host that both the browser and the
-  # in-cluster services can reach. The chart default (localhost:31000) only works when
-  # MinIO's NodePort happens to be on the caller's own loopback, which is true for
-  # neither on minikube -- use the node IP instead.
-  #
-  # This is per-profile: `minikube -p <profile> ip` prints it, and a stale value here
-  # is not a start-up failure -- the cluster comes up and uploads fail later, when a
-  # presigned URL is followed. The address below is the texera-staging profile's.
+  # in-cluster services can reach. The chart default (localhost:31000) works for
+  # neither on minikube -- use the node IP, which `minikube -p <profile> ip` prints.
+  # 31000 is rustfs.service.endpoint.nodePort; the credentials must match
+  # rustfs.secret.rustfs.{access_key,secret_key}.
   lakefsConfig: |
     database:
       type: postgres
@@ -104,13 +130,123 @@ lakefs:
       s3:
         endpoint: http://texera-rustfs-svc:9000
         pre_signed_expiry: 15m
-        pre_signed_endpoint: http://192.168.121.2:31000
+        pre_signed_endpoint: http://MINIKUBE_NODE_IP:31000
         force_path_style: true
         credentials:
           access_key_id: texera_rustfs
           secret_access_key: password
 
-# The pool runs the stock engine image. Pinning the whole pool to a specialised
-# image is what runtime images replaced: a unit now names the image it wants at
-# creation, so AlphaFold 3 is reachable by starting a unit from the alphafold3
-# runtime image rather than by making every unit in the deployment carry it.
+# A full replacement for the list in values.yaml -- Helm replaces lists rather than
+# merging them, so every entry has to be repeated. Three differ from values.yaml:
+#   - the CPU and memory limit options gain larger sizes, because the create-unit
+#     dialog offers exactly these strings and the backend 403s on anything else, and
+#     AlphaFold's MSA search wants more than 2Gi;
+#   - email verification is off, because there is no SMTP sender here and leaving it
+#     on makes registration answer 503.
+texeraEnvVars:
+  - name: USER_SYS_ADMIN_USERNAME
+    value: "texera"
+  - name: USER_SYS_ADMIN_PASSWORD
+    value: "texera"
+  - name: STORAGE_JDBC_USERNAME
+    value: postgres
+  - name: USER_SYS_ENABLED
+    value: "true"
+  - name: SCHEDULE_GENERATOR_ENABLE_COST_BASED_SCHEDULE_GENERATOR
+    value: "true"
+  - name: MAX_WORKFLOW_WEBSOCKET_REQUEST_PAYLOAD_SIZE_KB
+    value: "1024"
+  - name: MAX_NUM_OF_RUNNING_COMPUTING_UNITS_PER_USER
+    value: "10"
+  - name: KUBERNETES_COMPUTING_UNIT_CPU_LIMIT_OPTIONS
+    value: "2,4"
+  - name: KUBERNETES_COMPUTING_UNIT_MEMORY_LIMIT_OPTIONS
+    value: "2Gi,4Gi,8Gi"
+  - name: KUBERNETES_COMPUTING_UNIT_GPU_LIMIT_OPTIONS
+    value: "0"
+  - name: COMPUTING_UNIT_LOCAL_ENABLED
+    value: "false"
+  - name: KUBERNETES_COMPUTING_UNIT_ENABLED
+    value: "true"
+  - name: KUBERNETES_IMAGE_PULL_POLICY
+    value: "IfNotPresent"
+  - name: GUI_WORKFLOW_WORKSPACE_PYTHON_LANGUAGE_SERVER_PORT
+    value: ""
+  - name: GUI_WORKFLOW_WORKSPACE_PRODUCTION_SHARED_EDITING_SERVER
+    value: "true"
+  - name: GUI_LOGIN_LOCAL_LOGIN
+    value: "true"
+  - name: GUI_LOGIN_GOOGLE_LOGIN
+    value: "true"
+  # Turn on together with the USER_SYS_ORCID_* credentials below. On with nothing configured, the
+  # button renders disabled and /auth/orcid/config reports the provider unavailable on every visit.
+  - name: GUI_LOGIN_ORCID_LOGIN
+    value: "false"
+  # Turn on together with USER_SYS_APPLE_CLIENT_ID below. Apple also rejects an unregistered or
+  # non-HTTPS redirect, so the flow cannot complete until the Services ID names this deployment.
+  - name: GUI_LOGIN_APPLE_LOGIN
+    value: "false"
+  - name: GUI_DATASET_SINGLE_FILE_UPLOAD_MAXIMUM_SIZE_MB
+    value: "1024"
+  - name: GUI_WORKFLOW_WORKSPACE_EXPORT_EXECUTION_RESULT_ENABLED
+    value: "true"
+  - name: GUI_WORKFLOW_WORKSPACE_WORKFLOW_EXECUTIONS_TRACKING_ENABLED
+    value: "true"
+  - name: GUI_WORKFLOW_WORKSPACE_ASYNC_RENDERING_ENABLED
+    value: "true"
+  - name: GUI_WORKFLOW_WORKSPACE_COPILOT_ENABLED
+    value: "true"
+  - name: COMPUTING_UNIT_SHARING_ENABLED
+    value: "true"
+  # Public computing units: units an administrator creates that every user may run on. A public
+  # unit runs one workflow at a time and queues the rest, taking turns between users, so turning
+  # this off also removes the queue -- nothing else queues. Forwarded to each unit's own pod by
+  # the managing service, because a unit decides for itself whether to queue a run.
+  - name: COMPUTING_UNIT_PUBLIC_ENABLED
+    value: "true"
+  # Seconds one run may hold a public unit before the queue reclaims it, so a single wedged
+  # workflow cannot block every other user. 0 disables the watchdog; the run itself is never
+  # killed, the unit is only handed on.
+  - name: COMPUTING_UNIT_PUBLIC_MAX_RUN_SECONDS
+    value: "0"
+  - name: USER_SYS_INVITE_ONLY
+    value: "true"
+  # On by default; set to "false" to accept addresses unproven. This must agree with the
+  # USER_SYS_GOOGLE_SMTP_* credentials below: left on with no working sender, registration and the
+  # add-address prompt both refuse with a 503 rather than letting an unproven address through.
+  - name: USER_SYS_EMAIL_VERIFICATION
+    value: "false"
+  - name: USER_SYS_GOOGLE_CLIENT_ID
+    value: ""
+  - name: USER_SYS_APPLE_CLIENT_ID
+    value: ""
+  - name: USER_SYS_GOOGLE_SMTP_GMAIL
+    value: ""
+  - name: USER_SYS_GOOGLE_SMTP_PASSWORD
+    value: ""
+  # ORCID sign-in. The client id and secret come from an ORCID developer application; leave them
+  # empty to keep the provider switched off. baseUrl selects the deployment (sandbox vs
+  # production), and redirectUri must be this deployment's own /callback/orcid URL, registered on
+  # that ORCID application — ORCID does not accept `localhost`. It drives both legs of the flow:
+  # /auth/orcid/config hands it to the login page and the token exchange sends the same value, so
+  # leaving it empty switches the provider off rather than failing after the user has consented.
+  - name: USER_SYS_ORCID_CLIENT_ID
+    value: ""
+  - name: USER_SYS_ORCID_CLIENT_SECRET
+    value: ""
+  - name: USER_SYS_ORCID_BASE_URL
+    value: "https://orcid.org"
+  - name: USER_SYS_ORCID_REDIRECT_URI
+    value: ""
+  - name: USER_SYS_DOMAIN
+    value: ""
+  - name: AUTH_JWT_SECRET
+    # Development-only default (256-bit HS256 secret). Production environments MUST override this with a different, securely generated secret.
+    value: "a7f3c8e9b14d2e6f5a0b9c3d8e1f4a6b2c5d7e9f0a3b6c8d1e4f7a9b2c5d8e1f"
+
+yWebsocketServer:
+  name: y-websocket-server
+  replicaCount: 1
+  image: texera/y-websocket-server:latest
+
+

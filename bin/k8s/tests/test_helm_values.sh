@@ -62,6 +62,13 @@ ALLOWED_ABSENT = {
     "webserver.service.nodePort",
     "workflowCompilingService.service.nodePort",
     "workflowComputingUnitManager.service.nodePort",
+    # Read only by the Lakekeeper init Job, which is guarded by `lakekeeperInit.enabled`.
+    # This deployment keeps the Iceberg catalog on Postgres and leaves Lakekeeper off, so
+    # the whole lakekeeper block is reduced to `enabled: false`.
+    "lakekeeper.catalog.service.externalPort",
+    # Read only by minio-persistence.yaml, which is guarded by `minio.enabled`. MinIO is
+    # kept for deployments whose object data predates the RustFS switch and is off here.
+    "persistence.minioHostLocalPath",
 }
 
 # Helm renders everything under templates/ that .helmignore does not drop, so scan by
