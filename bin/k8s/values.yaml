@@ -441,6 +441,11 @@ workflowComputingUnitPool:
     # jupyterPool, so it silently never applied here.
     gpuResources: {}
   imageName: texera-workflow-execution-coordinator
+  # Tag for the engine image a computing unit runs, when it should differ from the rest of
+  # the deployment's. Empty means "use texera.imageTag". A unit can already name a curated
+  # image per unit, but that route resolves a digest from a registry; this one stays a tag,
+  # which is what a locally built image needs.
+  imageTag: ""
   service:
     port: 8085
     targetPort: 8085

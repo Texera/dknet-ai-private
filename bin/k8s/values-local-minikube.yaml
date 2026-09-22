@@ -80,7 +80,13 @@ litellm:
   enabled: false
 
 metrics-server:
-  # minikube ships its own addon; two installs fight over the same APIService.
+  # minikube ships its own addon; two installs fight over the same APIService, so use the
+  # addon and keep the chart's copy off:
+  #
+  #   minikube -p <profile> addons enable metrics-server
+  #
+  # One of the two must be running. Creating a computing unit reads pod metrics, so with
+  # neither, /computing-unit/create fails with a 500 from metrics.k8s.io "Not Found".
   enabled: false
 
 postgresql:
@@ -143,6 +149,14 @@ lakefs:
 #     AlphaFold's MSA search wants more than 2Gi;
 #   - email verification is off, because there is no SMTP sender here and leaving it
 #     on makes registration answer 503.
+# Every computing unit runs the AlphaFold 3 image, built by
+# bin/dockerfiles/computing-unit-alphafold3.dockerfile on top of the engine image. The
+# platform's own services stay on :dev. A curated image would be the per-unit way to do
+# this, but registration resolves a digest from a registry, which a locally built image
+# has no way to satisfy -- see bin/demo/alphafold3/README.md.
+workflowComputingUnitPool:
+  imageTag: alpha3
+
 texeraEnvVars:
   - name: USER_SYS_ADMIN_USERNAME
     value: "texera"
@@ -214,6 +228,13 @@ texeraEnvVars:
   # On by default; set to "false" to accept addresses unproven. This must agree with the
   # USER_SYS_GOOGLE_SMTP_* credentials below: left on with no working sender, registration and the
   # add-address prompt both refuse with a 503 rather than letting an unproven address through.
+  # The Models tabs, both off by default. The AlphaFold demo delivers its sequence
+  # database as a model version that the engine mounts, so a user needs somewhere to
+  # create one and commit a version.
+  - name: GUI_TABS_MODELS_ENABLED
+    value: "true"
+  - name: GUI_TABS_MODEL_ENABLED
+    value: "true"
   - name: USER_SYS_EMAIL_VERIFICATION
     value: "false"
   - name: USER_SYS_GOOGLE_CLIENT_ID
