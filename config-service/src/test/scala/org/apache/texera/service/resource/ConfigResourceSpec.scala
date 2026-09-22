@@ -426,6 +426,10 @@ class ConfigResourceSpec
       "datasets_enabled",
       "models_enabled",
       "compute_enabled",
+      // Fork: the CloudBioMapper Clusters tab, added to default.conf's gui.tabs section by
+      // this fork. The set below is deliberately exhaustive, so a key added there has to be
+      // added here too.
+      "cluster_enabled",
       "quota_enabled",
       "forum_enabled",
       "about_enabled",

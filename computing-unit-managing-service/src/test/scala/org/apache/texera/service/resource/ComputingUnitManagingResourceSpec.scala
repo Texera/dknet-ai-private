@@ -471,9 +471,14 @@ class ComputingUnitManagingResourceSpec
   // case.
   private val requiredEnvNames = Seq(
     EnvironmentalVariable.ENV_FILE_SERVICE_GET_DATASET_PRESIGNED_URL_ENDPOINT,
-    EnvironmentalVariable.ENV_FILE_SERVICE_UPLOAD_ONE_FILE_TO_DATASET_ENDPOINT,
-    EnvironmentalVariable.ENV_AUTH_JWT_SECRET
+    EnvironmentalVariable.ENV_FILE_SERVICE_UPLOAD_ONE_FILE_TO_DATASET_ENDPOINT
+    // ENV_AUTH_JWT_SECRET is deliberately not required on this fork: the manager does not set
+    // it, and computingUnitEnvironmentVariables supplies the unit's copy from AuthConfig.
   )
+
+  // A stand-in for "some required variable" in the cases below, which used to name
+  // AUTH_JWT_SECRET. Taken from the list so it follows any change to it.
+  private val someRequired = requiredEnvNames.head
 
   private val payloadSize = EnvironmentalVariable.ENV_MAX_WORKFLOW_WEBSOCKET_REQUEST_PAYLOAD_SIZE_KB
 
@@ -499,7 +504,7 @@ class ComputingUnitManagingResourceSpec
   }
 
   it should "name the missing variable and leave the ones that are set out of it" in {
-    val absent = EnvironmentalVariable.ENV_AUTH_JWT_SECRET
+    val absent = someRequired
     val thrown = intercept[ServiceUnavailableException] {
       ComputingUnitManagingResource.requiredComputingUnitEnv(name =>
         if (name == absent) None else Some("set")
@@ -513,7 +518,7 @@ class ComputingUnitManagingResourceSpec
 
   // The chart renders every value as "{{ .value }}", so an unset one arrives as "".
   it should "treat a blank variable as missing" in {
-    val blank = EnvironmentalVariable.ENV_AUTH_JWT_SECRET
+    val blank = someRequired
     val thrown = intercept[ServiceUnavailableException] {
       ComputingUnitManagingResource.requiredComputingUnitEnv(name =>
         if (name == blank) Some("   ") else Some("set")
@@ -522,12 +527,12 @@ class ComputingUnitManagingResourceSpec
     thrown.getMessage should include(blank)
   }
 
-  // AuthConfig does not trim, so a trimmed copy would verify against a different key. The
-  // endpoints are trimmed by their own readers, so they need nothing here either.
+  // Values are handed on exactly as read: a trimmed copy would be a different value, and the
+  // endpoints are trimmed by their own readers, so nothing is trimmed here.
   it should "hand on the value untrimmed" in {
     val env =
       ComputingUnitManagingResource.requiredComputingUnitEnv(_ => Some(" s3cret "))
-    env(EnvironmentalVariable.ENV_AUTH_JWT_SECRET) shouldBe " s3cret "
+    env(someRequired) shouldBe " s3cret "
   }
 
   // The variable is there in the pod's env, so calling it "missing" would read as wrong.
