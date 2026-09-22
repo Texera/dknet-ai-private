@@ -51,11 +51,12 @@ import type { ComputingUnitSelectionComponent } from "../power-button/computing-
 import { WorkflowContent } from "../../../common/type/workflow";
 import { Router } from "@angular/router";
 import { ReportGenerationService } from "../../service/report-generation/report-generation.service";
-import { USER_WORKFLOW } from "../../../app-routing.constant";
+import { USER_WORKFLOW, workspaceFormUrl } from "../../../app-routing.constant";
 import { GuiConfigService } from "../../../common/service/gui-config.service";
 import { MockGuiConfigService } from "../../../common/service/gui-config.service.mock";
 import { JupyterPanelService } from "../../service/jupyter-panel/jupyter-panel.service";
 import type { Mocked } from "vitest";
+import { WarehouseService } from "../../../common/service/warehouse/warehouse.service";
 
 describe("MenuComponent", () => {
   let component: MenuComponent;
@@ -118,11 +119,21 @@ describe("MenuComponent", () => {
 
   it("does not open the Form View for a workflow that has not been saved yet", () => {
     vi.spyOn(component["workflowActionService"], "getWorkflowMetadata").mockReturnValue({ wid: undefined } as any);
-    const href = window.location.href;
+    const navigate = vi.spyOn(component as any, "openFormViewPage");
 
     component.onClickOpenFormView();
 
-    expect(window.location.href).toBe(href);
+    expect(navigate).not.toHaveBeenCalled();
+  });
+
+  // A route, not a page load: the workflow stays open across the switch, so the shared document,
+  // the computing unit connection and a running execution are handed over rather than rebuilt.
+  it("routes to the Form View rather than reloading the page", () => {
+    const navigateByUrl = vi.spyOn(TestBed.inject(Router), "navigateByUrl").mockResolvedValue(true);
+
+    (component as any).openFormViewPage(42);
+
+    expect(navigateByUrl).toHaveBeenCalledWith(workspaceFormUrl(42));
   });
 
   it("hands over to the id the save assigned when the canvas held a workflow never saved yet", () => {
@@ -199,6 +210,26 @@ describe("MenuComponent", () => {
     expect(persistSpy).toHaveBeenCalledTimes(2); // saved once more
     expect(navigate).not.toHaveBeenCalled();
     second$.complete();
+    expect(navigate).toHaveBeenCalledWith(7);
+    expect(component.isSaving).toBe(false);
+  });
+
+  it("leaves only once every queued save has landed, not just its own", () => {
+    // A rename made while the switch's save is out saves through the menu itself and is queued
+    // behind the switch's save; the hand-over waits for the queue to drain, or the page load
+    // would abort that save.
+    component.writeAccess = true;
+    vi.spyOn(component["workflowActionService"], "getWorkflowMetadata").mockReturnValue({ wid: 7 } as any);
+    vi.spyOn(workflowPersistService, "persistWorkflow").mockReturnValue(of({ wid: 7, name: "saved" } as any));
+    vi.spyOn(component["workflowActionService"], "setWorkflowMetadata").mockImplementation(() => {});
+    const drained$ = new Subject<void>();
+    vi.spyOn(workflowPersistService, "whenSavesDrained").mockReturnValue(drained$.asObservable());
+    const navigate = vi.spyOn(component as any, "openFormViewPage").mockImplementation(() => {});
+
+    component.onClickOpenFormView();
+
+    expect(navigate).not.toHaveBeenCalled(); // its own save is done, another is still queued
+    drained$.next();
     expect(navigate).toHaveBeenCalledWith(7);
     expect(component.isSaving).toBe(false);
   });
@@ -410,6 +441,42 @@ describe("MenuComponent", () => {
       expect(behavior.disable).toBe(false);
       expect(runSpy).toHaveBeenCalledTimes(1);
     });
+
+    it("keeps Pause in control of a running execution even when the warehouse disappears", () => {
+      // Deleting the last warehouse mid-run flips warehouseRequiredButMissing;
+      // the primary button must stay Pause/Kill, not become the warehouse prompt.
+      component.isWorkflowValid = true;
+      component.isWorkflowEmpty = false;
+      component.computingUnitStatus = ComputingUnitState.Running;
+      Object.defineProperty(component.workflowWebsocketService, "isConnected", { get: () => true, configurable: true });
+      component.executionState = ExecutionState.Running;
+      component.computingUnitSelectionComponent = {
+        warehouseRequiredButMissing: true,
+      } as unknown as Mocked<ComputingUnitSelectionComponent>;
+
+      const behavior = component.getRunButtonBehavior();
+
+      expect(behavior.text).toBe("Pause");
+    });
+
+    it("offers to create a warehouse when one is required but missing", () => {
+      component.isWorkflowValid = true;
+      component.isWorkflowEmpty = false;
+      component.computingUnitStatus = ComputingUnitState.Running;
+      Object.defineProperty(component.workflowWebsocketService, "isConnected", { get: () => true, configurable: true });
+      component.executionState = ExecutionState.Uninitialized;
+      component.computingUnitSelectionComponent = {
+        warehouseRequiredButMissing: true,
+      } as unknown as Mocked<ComputingUnitSelectionComponent>;
+
+      const behavior = component.getRunButtonBehavior();
+
+      // Same word the picker's own empty state shows, as CU repeats "Connect";
+      // it also has to fit the run button's fixed width.
+      expect(behavior.text).toBe("Warehouse");
+      expect(behavior.icon).toBe("plus-circle");
+      expect(behavior.disable).toBe(false);
+    });
   });
 
   it("applyRunButtonBehavior copies the behavior onto the bound fields", () => {
@@ -590,6 +657,51 @@ describe("MenuComponent", () => {
       component.runWorkflow();
 
       expect(executeSpy).toHaveBeenCalledWith("Untitled Execution", false);
+    });
+
+    it("leads to the create-warehouse modal when a warehouse is required but missing", () => {
+      component.isWorkflowValid = true;
+      component.isWorkflowEmpty = false;
+      component.computingUnitStatus = ComputingUnitState.Running;
+      component.computingUnitSelectionComponent = {
+        showAddComputeUnitModalVisible: vi.fn(),
+        showAddWarehouseModalVisible: vi.fn(),
+        warehouseRequiredButMissing: true,
+      } as unknown as Mocked<ComputingUnitSelectionComponent>;
+      const executeSpy = vi.spyOn(executeWorkflowService, "executeWorkflowWithEmailNotification");
+
+      component.runWorkflow();
+
+      expect(component.computingUnitSelectionComponent.showAddWarehouseModalVisible).toHaveBeenCalledTimes(1);
+      expect(executeSpy).not.toHaveBeenCalled();
+    });
+
+    it("recomputes the Run button snapshot when the warehouse pick changes", () => {
+      // The button text is a stored snapshot; without the subscription it
+      // would keep saying "Run" after the warehouse load leaves none.
+      const applySpy = vi.spyOn(component, "applyRunButtonBehavior");
+
+      TestBed.inject(WarehouseService).selectWarehouse(7);
+
+      expect(applySpy).toHaveBeenCalled();
+    });
+
+    it("submits the execution when a warehouse is selected", () => {
+      component.isWorkflowValid = true;
+      component.isWorkflowEmpty = false;
+      component.computingUnitStatus = ComputingUnitState.Running;
+      component.computingUnitSelectionComponent = {
+        showAddWarehouseModalVisible: vi.fn(),
+        warehouseRequiredButMissing: false,
+      } as unknown as Mocked<ComputingUnitSelectionComponent>;
+      const executeSpy = vi
+        .spyOn(executeWorkflowService, "executeWorkflowWithEmailNotification")
+        .mockImplementation(() => {});
+
+      component.runWorkflow();
+
+      expect(executeSpy).toHaveBeenCalledTimes(1);
+      expect(component.computingUnitSelectionComponent.showAddWarehouseModalVisible).not.toHaveBeenCalled();
     });
   });
 

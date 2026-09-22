@@ -58,6 +58,7 @@ function makeUnit(overrides: Partial<DashboardWorkflowComputingUnit> = {}): Dash
       terminateTime: undefined,
       type: "kubernetes",
       uri: "http://localhost/wsapi",
+      accessScope: "PRIVATE",
       resource: {
         cpuLimit: "1000m",
         memoryLimit: "2Gi",

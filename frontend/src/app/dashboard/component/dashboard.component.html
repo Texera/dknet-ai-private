@@ -122,6 +122,18 @@
             <span>CloudBioMapper Clusters</span>
           </li>
           <li
+            *ngIf="config.env.warehouseEnabled"
+            nz-menu-item
+            nz-tooltip="Manage warehouses"
+            nzMatchRouter="true"
+            nzTooltipPlacement="right"
+            [routerLink]="USER_WAREHOUSE">
+            <span
+              nz-icon
+              nzType="cloud-server"></span>
+            <span>Warehouses</span>
+          </li>
+          <li
             nz-menu-item
             nz-tooltip="Manage saved Python virtual environments"
             nzMatchRouter="true"
@@ -208,6 +220,17 @@
               nz-icon
               nzType="edit"></span>
             <span>Settings</span>
+          </li>
+          <li
+            nz-menu-item
+            nz-tooltip="Images a computing unit can be started from"
+            nzMatchRouter="true"
+            nzTooltipPlacement="right"
+            [routerLink]="ADMIN_CU_IMAGE">
+            <span
+              nz-icon
+              nzType="appstore"></span>
+            <span>CU Images</span>
           </li>
         </ul>
       </li>

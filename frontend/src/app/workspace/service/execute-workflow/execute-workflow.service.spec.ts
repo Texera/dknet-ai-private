@@ -32,6 +32,9 @@ import { StubOperatorMetadataService } from "../operator-metadata/stub-operator-
 import { JointUIService } from "../joint-ui/joint-ui.service";
 import { of, Subject } from "rxjs";
 import { WorkflowWebsocketService } from "../workflow-websocket/workflow-websocket.service";
+import { WorkflowStatusService } from "../workflow-status/workflow-status.service";
+import { NotificationService } from "../../../common/service/notification/notification.service";
+import { GuiConfigService } from "../../../common/service/gui-config.service";
 
 import { mockLogicalPlan_scan_result, mockWorkflowPlan_scan_result } from "./mock-workflow-plan";
 import { HttpClientTestingModule } from "@angular/common/http/testing";
@@ -39,6 +42,7 @@ import { WorkflowUtilService } from "../workflow-graph/util/workflow-util.servic
 
 import { WorkflowSettings } from "src/app/common/type/workflow";
 import { ComputingUnitStatusService } from "../../../common/service/computing-unit/computing-unit-status/computing-unit-status.service";
+import { WarehouseService } from "../../../common/service/warehouse/warehouse.service";
 import { AuthService } from "src/app/common/service/user/auth.service";
 import { StubAuthService } from "src/app/common/service/user/stub-auth.service";
 import { UserService } from "src/app/common/service/user/user.service";
@@ -291,6 +295,43 @@ describe("ExecuteWorkflowService", () => {
     expect(result).toEqual({ state: ExecutionState.Running });
   });
 
+  it("handleExecutionEvent carries the queue position into the Queued state", () => {
+    const result = service.handleExecutionEvent({
+      type: "WorkflowQueueStatusEvent",
+      queued: true,
+      position: 3,
+      queueLength: 5,
+    });
+    expect(result).toEqual({ state: ExecutionState.Queued, position: 3, queueLength: 5 });
+  });
+
+  // Leaving the queue is not a state of its own: the run was either admitted, and the
+  // execution's own events take over, or cancelled, which the kill path reported.
+  it("handleExecutionEvent ignores a queue event once the run leaves the queue", () => {
+    const result = service.handleExecutionEvent({
+      type: "WorkflowQueueStatusEvent",
+      queued: false,
+      position: 0,
+      queueLength: 0,
+    });
+    expect(result).toBeUndefined();
+  });
+
+  // The position only ever arrives on WorkflowQueueStatusEvent, so a bare state event saying
+  // "Queued" cannot be turned into a Queued state -- it would have no number to show.
+  it("handleExecutionEvent ignores a bare Queued workflow state event", () => {
+    const result = service.handleExecutionEvent({ type: "WorkflowStateEvent", state: ExecutionState.Queued });
+    expect(result).toBeUndefined();
+  });
+
+  // A queued run's plan was submitted when Run was pressed, so editing it while it waits would
+  // not change what eventually runs.
+  it("locks workflow modification while queued", () => {
+    const disableSpy = vi.spyOn(service["workflowActionService"], "disableWorkflowModification");
+    (service as any).updateExecutionState({ state: ExecutionState.Queued, position: 1, queueLength: 2 });
+    expect(disableSpy).toHaveBeenCalled();
+  });
+
   it("handleExecutionEvent maps RecoveryStartedEvent to the Recovering state", () => {
     const result = service.handleExecutionEvent({ type: "RecoveryStartedEvent" });
     expect(result).toEqual({ state: ExecutionState.Recovering });
@@ -394,6 +435,64 @@ describe("ExecuteWorkflowService", () => {
     expect(wsSendSpy).toHaveBeenCalledWith(
       "WorkflowExecuteRequest",
       expect.objectContaining({ computingUnitId: 99, emailNotificationEnabled: true, executionName: "exec" })
+    );
+  }));
+
+  it("a refused run leaves the previous execution's state untouched (#7817)", () => {
+    TestBed.inject(GuiConfigService).env.warehouseEnabled = true;
+    try {
+      TestBed.inject(WarehouseService).selectWarehouse(undefined);
+      const resetSpy = vi.spyOn(service, "resetExecutionState");
+      const statusResetSpy = vi.spyOn(TestBed.inject(WorkflowStatusService), "resetStatus");
+      vi.spyOn(TestBed.inject(NotificationService), "error").mockReturnValue(undefined as never);
+
+      service.executeWorkflowWithEmailNotification("exec", false);
+
+      expect(resetSpy).not.toHaveBeenCalled();
+      expect(statusResetSpy).not.toHaveBeenCalled();
+    } finally {
+      TestBed.inject(GuiConfigService).env.warehouseEnabled = false;
+    }
+  });
+
+  it("refuses to run without a warehouse while the deployment requires one (#7817)", fakeAsync(() => {
+    // Paths that bypass the menu gate (form view, run-up-to, replay) all funnel
+    // through sendExecutionRequest; the shared storage must not catch them.
+    TestBed.inject(GuiConfigService).env.warehouseEnabled = true;
+    try {
+      TestBed.inject(WarehouseService).selectWarehouse(undefined);
+      const wsSendSpy = vi.spyOn(service["workflowWebsocketService"], "send");
+      const errorSpy = vi.spyOn(TestBed.inject(NotificationService), "error").mockReturnValue(undefined as never);
+
+      service.executeWorkflowWithEmailNotification("exec", false);
+      tick(FORM_DEBOUNCE_TIME_MS + 1);
+      flush();
+
+      expect(wsSendSpy).not.toHaveBeenCalledWith("WorkflowExecuteRequest", expect.anything());
+      expect(errorSpy).toHaveBeenCalledWith("Create or select a warehouse before running.");
+    } finally {
+      TestBed.inject(GuiConfigService).env.warehouseEnabled = false;
+    }
+  }));
+
+  it("sendExecutionRequest carries the picked warehouse id, and none when unset (#7817)", fakeAsync(() => {
+    const warehouseService = TestBed.inject(WarehouseService);
+    const wsSendSpy = vi.spyOn(service["workflowWebsocketService"], "send");
+    const settings = service["workflowActionService"].getWorkflowSettings();
+
+    warehouseService.selectWarehouse(7);
+    service.sendExecutionRequest("exec", {} as LogicalPlan, settings, false, undefined);
+    tick(FORM_DEBOUNCE_TIME_MS + 1);
+    flush();
+    expect(wsSendSpy).toHaveBeenLastCalledWith("WorkflowExecuteRequest", expect.objectContaining({ warehouseId: 7 }));
+
+    warehouseService.selectWarehouse(undefined);
+    service.sendExecutionRequest("exec", {} as LogicalPlan, settings, false, undefined);
+    tick(FORM_DEBOUNCE_TIME_MS + 1);
+    flush();
+    expect(wsSendSpy).toHaveBeenLastCalledWith(
+      "WorkflowExecuteRequest",
+      expect.objectContaining({ warehouseId: undefined })
     );
   }));
 

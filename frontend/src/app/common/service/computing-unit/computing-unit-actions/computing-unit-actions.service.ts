@@ -38,6 +38,13 @@ export interface StartComputingUnitRequest {
   shmSize: string;
   gpuModel: string;
   localUri: string;
+  /** A curated image to start from. Absent means the deployment's own image. */
+  imageId?: number;
+  /**
+   * Create this as a public unit, usable by everyone and queued. ADMIN-only: the request goes
+   * to a different, admin-gated endpoint, so a non-admin setting this just gets a 403.
+   */
+  isPublic?: boolean;
 }
 
 @Injectable({
@@ -76,12 +83,18 @@ export class ComputingUnitActionsService {
         request.gpu,
         request.jvmMemorySize,
         request.shmSize,
-        request.gpuModel
+        request.gpuModel,
+        request.imageId,
+        request.isPublic ?? false
       );
     }
 
     if (request.type === "local") {
-      return this.computingUnitService.createLocalComputingUnit(request.name, request.localUri);
+      return this.computingUnitService.createLocalComputingUnit(
+        request.name,
+        request.localUri,
+        request.isPublic ?? false
+      );
     }
 
     throw new Error("Unsupported computing unit type");

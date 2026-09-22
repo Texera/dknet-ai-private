@@ -52,7 +52,11 @@ import org.apache.texera.amber.error.ErrorUtils.{
 }
 import org.apache.texera.dao.jooq.generated.tables.pojos.User
 import org.apache.texera.service.util.LargeBinaryManager
-import org.apache.texera.web.model.websocket.event.{CacheUsageUpdateEvent, TexeraWebSocketEvent}
+import org.apache.texera.web.model.websocket.event.{
+  CacheUsageUpdateEvent,
+  TexeraWebSocketEvent,
+  WorkflowQueueStatusEvent
+}
 import org.apache.texera.web.model.websocket.request.WorkflowExecuteRequest
 import org.apache.texera.web.resource.dashboard.user.workflow.WorkflowExecutionsResource
 import org.apache.texera.web.service.WorkflowService.mkWorkflowStateId
@@ -147,11 +151,29 @@ class WorkflowService(
     )
     new OperatorPortCacheService(dao)
   }
+
+  // Turn queue-position changes into a websocket event. Registered here rather than in the
+  // queue so that every session subscribed to this workflow sees the same wait, including
+  // collaborators who did not press Run.
+  stateStore.queueStore.registerDiffHandler((oldState, newState) =>
+    if (oldState == newState) Iterable.empty
+    else
+      Iterable(
+        WorkflowQueueStatusEvent(newState.queued, newState.position, newState.queueLength)
+      )
+  )
+
   val lifeCycleManager: WorkflowLifecycleManager = new WorkflowLifecycleManager(
     s"workflowId=$workflowId",
     cleanUpTimeout,
     () => {
-      // Clear execution-scoped artifacts (runtime stats, result/console docs) for all executions.
+      // This workflow's state is going away, so anything the computing unit's queue holds for it
+      // is stale: drop a waiting entry, and hand the unit on if this run was the one holding it.
+      // Without this an abandoned run that never reached a terminal state would block the queue.
+      // Done first: it must happen even if clearing the artifacts below throws.
+      ComputingUnitExecutionQueue.forComputingUnit(computingUnitId).onWorkflowDisposed(workflowId)
+      // Clear execution-scoped artifacts (runtime stats, result/console docs, cache) for all
+      // executions, not just the latest -- the cache is keyed by source execution.
       val executionIds = WorkflowExecutionService.getExecutionIds(workflowId, computingUnitId)
       clearExecutionResources(executionIds)
       WorkflowService.workflowServiceMapping.remove(mkWorkflowStateId(workflowId))

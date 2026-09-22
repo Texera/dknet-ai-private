@@ -43,6 +43,8 @@ export interface GuiConfig {
   defaultDataTransferBatchSize: number;
   workflowEmailNotificationEnabled: boolean;
   sharingComputingUnitEnabled: boolean;
+  publicComputingUnitEnabled: boolean;
+  warehouseEnabled: boolean;
   operatorConsoleMessageBufferSize: number;
   defaultLocalUser?: { username?: string; password?: string };
   activeTimeInMinutes: number;

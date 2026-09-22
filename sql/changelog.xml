@@ -164,6 +164,17 @@
         <sqlFile path="sql/updates/50.sql"/>
     </changeSet>
 
+    <!-- Public computing units: admin-created units every user may run on, via access_scope -->
+    <changeSet id="51" author="ali">
+        <sqlFile path="sql/updates/51.sql"/>
+    </changeSet>
+
+    <!-- Fork: per-user permission map on the user table (was an unregistered 51.sql before the
+         rodeo merge, which brought its own 51; renumbered to 52 and registered here). -->
+    <changeSet id="52" author="dknet">
+        <sqlFile path="sql/updates/52.sql"/>
+    </changeSet>
+
     <!-- example changeSet
     <changeSet id="1" author="author">
         <sqlFile path="sql/updates/1.sql"/>

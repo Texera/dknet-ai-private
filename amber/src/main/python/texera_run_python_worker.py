@@ -23,6 +23,7 @@ from loguru import logger
 try:
     from core.python_worker import PythonWorker
     from core.storage.storage_config import StorageConfig
+    from core.storage.user_context import UserContext
 except ModuleNotFoundError as e:
     if e.name == "proto" or (e.name or "").startswith("proto."):
         sys.exit(
@@ -75,6 +76,7 @@ EXPECTED_CONFIG_KEYS = frozenset(
         "s3AuthUsername",
         "s3AuthPassword",
         "s3LargeBinariesBaseUri",
+        "userJwtToken",
     }
 )
 
@@ -137,6 +139,11 @@ def main(raw_config: str) -> None:
         config["s3AuthPassword"],
         config["s3LargeBinariesBaseUri"],
     )
+
+    # Who this run acts as when reading datasets. Comes from the JVM rather than the process
+    # environment: a public computing unit has no user of its own, so the pod carries no
+    # USER_JWT_TOKEN and each run authenticates as whoever started it.
+    UserContext.initialize(config["userJwtToken"])
 
     # Setting R_HOME environment variable for R-UDF usage
     r_path = config["rPath"]

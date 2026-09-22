@@ -20,7 +20,8 @@
 .memory-selection,
 .cpu-selection,
 .gpu-selection,
-.gpu-model-selection {
+.gpu-model-selection,
+.image-selection {
   width: 100%;
 }
 
@@ -217,4 +218,11 @@ $advanced-panel-padding: 16px;
     align-self: stretch;
     margin: 6px 10px $advanced-panel-padding;
   }
+}
+
+.public-unit-hint {
+  display: block;
+  margin-top: 4px;
+  font-size: 12px;
+  color: rgb(0 0 0 / 45%);
 }

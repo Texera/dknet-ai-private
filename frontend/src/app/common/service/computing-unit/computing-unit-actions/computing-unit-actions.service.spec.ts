@@ -81,7 +81,11 @@ describe("ComputingUnitActionsService", () => {
         "4G",
         "1",
         "1G",
-        "64M"
+        "64M",
+        // No curated image chosen, so the unit runs the deployment's own.
+        undefined,
+        // Private unless the request explicitly asks otherwise.
+        false
       );
       expect(computingUnitService.createLocalComputingUnit).not.toHaveBeenCalled();
     });
@@ -89,7 +93,51 @@ describe("ComputingUnitActionsService", () => {
     it("routes a local request to createLocalComputingUnit with name and localUri", () => {
       service.create({ ...baseRequest, type: "local" });
 
-      expect(computingUnitService.createLocalComputingUnit).toHaveBeenCalledWith("unit", "http://localhost:8080");
+      expect(computingUnitService.createLocalComputingUnit).toHaveBeenCalledWith(
+        "unit",
+        "http://localhost:8080",
+        false
+      );
+    });
+
+    // isPublic picks the admin-only endpoint in the managing service, so it has to survive the
+    // trip through here rather than being dropped on the floor.
+    it("passes isPublic through for a kubernetes request", () => {
+      service.create({ ...baseRequest, type: "kubernetes", isPublic: true });
+
+      expect(computingUnitService.createKubernetesBasedComputingUnit).toHaveBeenCalledWith(
+        "unit",
+        "2",
+        "4G",
+        "1",
+        "1G",
+        "64M",
+        undefined,
+        true
+      );
+    });
+
+    // A public unit is still started from a chosen image; the two travel independently, so the
+    // admin creation flow offers the same image picker as the ordinary one.
+    it("passes a curated image and isPublic together", () => {
+      service.create({ ...baseRequest, type: "kubernetes", imageId: 7, isPublic: true });
+
+      expect(computingUnitService.createKubernetesBasedComputingUnit).toHaveBeenCalledWith(
+        "unit",
+        "2",
+        "4G",
+        "1",
+        "1G",
+        "64M",
+        7,
+        true
+      );
+    });
+
+    it("passes isPublic through for a local request", () => {
+      service.create({ ...baseRequest, type: "local", isPublic: true });
+
+      expect(computingUnitService.createLocalComputingUnit).toHaveBeenCalledWith("unit", "http://localhost:8080", true);
     });
 
     it("throws for an unsupported computing unit type", () => {

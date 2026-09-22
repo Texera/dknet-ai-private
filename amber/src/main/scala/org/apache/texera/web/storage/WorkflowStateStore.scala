@@ -21,12 +21,24 @@ package org.apache.texera.web.storage
 
 import org.apache.texera.amber.core.storage.result.WorkflowResultStore
 
+/**
+  * Where a workflow stands in its computing unit's run queue, between pressing Run and the
+  * execution actually starting. Lives here, across executions, because at this point there is no
+  * execution to hang it off: an ExecutionStateStore is created only once the run is admitted.
+  */
+case class WorkflowQueueStore(
+    queued: Boolean = false,
+    position: Int = 0,
+    queueLength: Int = 0
+)
+
 // states that across executions.
 class WorkflowStateStore {
   val resultStore = new StateStore(WorkflowResultStore())
+  val queueStore = new StateStore(WorkflowQueueStore())
 
   def getAllStores: Iterable[StateStore[_]] = {
-    Iterable(resultStore)
+    Iterable(resultStore, queueStore)
   }
 
 }

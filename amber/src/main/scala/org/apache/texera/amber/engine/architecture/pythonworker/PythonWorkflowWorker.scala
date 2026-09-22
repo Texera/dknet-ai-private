@@ -22,6 +22,7 @@ package org.apache.texera.amber.engine.architecture.pythonworker
 import org.apache.pekko.actor.Props
 import com.twitter.util.Promise
 import org.apache.texera.common.config.{PythonUtils, StorageConfig, UdfConfig}
+import org.apache.texera.amber.core.storage.UserTokenProvider
 import org.apache.texera.amber.core.virtualidentity.ChannelIdentity
 import org.apache.texera.amber.engine.architecture.common.WorkflowActor
 import org.apache.texera.amber.engine.architecture.common.WorkflowActor.NetworkAck
@@ -86,6 +87,10 @@ object PythonWorkflowWorker {
       rPath: String,
       largeBinaryBaseUri: String
   ): Seq[(String, String)] = {
+    // The identity this run acts as, resolved when the worker starts. A public computing unit
+    // has no USER_JWT_TOKEN of its own, so without this a Python UDF could not read any dataset;
+    // on a private unit UserTokenProvider falls back to the pod variable, exactly as before.
+    val userJwtToken = UserTokenProvider.token
     val isPostgres = StorageConfig.icebergCatalogType == "postgres"
     val isRest = StorageConfig.icebergCatalogType == "rest"
     Seq(
@@ -111,6 +116,7 @@ object PythonWorkflowWorker {
       "s3Region" -> StorageConfig.s3Region,
       "s3AuthUsername" -> StorageConfig.s3Username,
       "s3AuthPassword" -> StorageConfig.s3Password,
+      "userJwtToken" -> userJwtToken,
       "s3LargeBinariesBaseUri" -> largeBinaryBaseUri
     )
   }

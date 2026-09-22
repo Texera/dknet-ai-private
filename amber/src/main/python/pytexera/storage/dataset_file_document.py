@@ -22,6 +22,8 @@ import urllib.parse
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
+from core.storage.user_context import UserContext
+
 from .resource_type import ResourceType
 
 
@@ -88,7 +90,7 @@ class DatasetFileDocument:
         else:
             raise invalid_format
 
-        self.jwt_token = os.getenv("USER_JWT_TOKEN")
+        self.jwt_token = UserContext.get_jwt_token()
         self.presign_endpoint = os.getenv(
             "FILE_SERVICE_GET_DATASET_PRESIGNED_URL_ENDPOINT"
         )

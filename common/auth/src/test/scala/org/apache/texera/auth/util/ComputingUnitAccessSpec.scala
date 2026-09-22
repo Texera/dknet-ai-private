@@ -20,7 +20,7 @@
 package org.apache.texera.auth.util
 
 import org.apache.texera.dao.MockTexeraDB
-import org.apache.texera.dao.jooq.generated.enums.PrivilegeEnum
+import org.apache.texera.dao.jooq.generated.enums.{ComputingUnitAccessScopeEnum, PrivilegeEnum}
 import org.apache.texera.dao.jooq.generated.tables.daos.{
   ComputingUnitUserAccessDao,
   UserDao,
@@ -39,6 +39,9 @@ import org.scalatest.matchers.should.Matchers
 // computing unit (cuid=100) owned by uid=1, plus a READ grant (uid=2) and a
 // WRITE grant (uid=3). Covers every branch of the single-join resolution:
 // missing unit, owner, explicit grant, and a user with no grant.
+//
+// Two more units cover access_scope: a live public unit (cuid=200) and a terminated one
+// (cuid=201), both owned by uid=1, neither with any access row.
 class ComputingUnitAccessSpec
     extends AnyFlatSpec
     with Matchers
@@ -46,6 +49,8 @@ class ComputingUnitAccessSpec
     with MockTexeraDB {
 
   private val cuid = 100
+  private val publicCuid = 200
+  private val terminatedPublicCuid = 201
 
   private def newUser(uid: Int, name: String): User = {
     val u = new User
@@ -63,11 +68,28 @@ class ComputingUnitAccessSpec
       case (uid, name) => userDao.insert(newUser(uid, name))
     }
 
+    val unitDao = new WorkflowComputingUnitDao(config)
+
     val unit = new WorkflowComputingUnit
     unit.setUid(1)
     unit.setName("cu")
     unit.setCuid(cuid)
-    new WorkflowComputingUnitDao(config).insert(unit)
+    unitDao.insert(unit)
+
+    val publicUnit = new WorkflowComputingUnit
+    publicUnit.setUid(1)
+    publicUnit.setName("public cu")
+    publicUnit.setCuid(publicCuid)
+    publicUnit.setAccessScope(ComputingUnitAccessScopeEnum.PUBLIC)
+    unitDao.insert(publicUnit)
+
+    val terminatedPublicUnit = new WorkflowComputingUnit
+    terminatedPublicUnit.setUid(1)
+    terminatedPublicUnit.setName("terminated public cu")
+    terminatedPublicUnit.setCuid(terminatedPublicCuid)
+    terminatedPublicUnit.setAccessScope(ComputingUnitAccessScopeEnum.PUBLIC)
+    terminatedPublicUnit.setTerminateTime(new java.sql.Timestamp(System.currentTimeMillis()))
+    unitDao.insert(terminatedPublicUnit)
 
     val accessDao = new ComputingUnitUserAccessDao(config)
     Seq(2 -> PrivilegeEnum.READ, 3 -> PrivilegeEnum.WRITE).foreach {
@@ -100,5 +122,24 @@ class ComputingUnitAccessSpec
 
   it should "return NONE for a user with no access row on an existing unit" in {
     ComputingUnitAccess.getComputingUnitAccess(cuid, 4) shouldBe PrivilegeEnum.NONE
+  }
+
+  it should "return WRITE on a public unit for a stranger with no access row" in {
+    ComputingUnitAccess.getComputingUnitAccess(publicCuid, 4) shouldBe PrivilegeEnum.WRITE
+  }
+
+  it should "return WRITE on a public unit for the administrator who created it" in {
+    ComputingUnitAccess.getComputingUnitAccess(publicCuid, 1) shouldBe PrivilegeEnum.WRITE
+  }
+
+  // The row outlives the pod, so the blanket grant has to end with the unit; otherwise every
+  // user keeps being routed at an address that no longer serves them.
+  it should "return NONE on a terminated public unit for a stranger" in {
+    ComputingUnitAccess.getComputingUnitAccess(terminatedPublicCuid, 4) shouldBe PrivilegeEnum.NONE
+  }
+
+  // Ownership still resolves on a terminated public unit; only the public grant lapses.
+  it should "return WRITE on a terminated public unit for its owner" in {
+    ComputingUnitAccess.getComputingUnitAccess(terminatedPublicCuid, 1) shouldBe PrivilegeEnum.WRITE
   }
 }

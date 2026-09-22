@@ -45,8 +45,9 @@ import { ResultExportationComponent } from "../result-exportation/result-exporta
 import { ReportGenerationService } from "../../service/report-generation/report-generation.service";
 import { ShareAccessComponent } from "src/app/dashboard/component/user/share-access/share-access.component";
 import { PanelService } from "../../service/panel/panel.service";
-import { USER_WORKFLOW, USER_WORKSPACE } from "../../../app-routing.constant";
+import { USER_WORKFLOW, workspaceFormUrl } from "../../../app-routing.constant";
 import { ComputingUnitStatusService } from "../../../common/service/computing-unit/computing-unit-status/computing-unit-status.service";
+import { WarehouseService } from "../../../common/service/warehouse/warehouse.service";
 import { ComputingUnitState } from "../../../common/type/computing-unit-connection.interface";
 import { ComputingUnitSelectionComponent } from "../power-button/computing-unit-selection.component";
 import { GuiConfigService } from "../../../common/service/gui-config.service";
@@ -126,6 +127,9 @@ import { JupyterPanelService } from "../../service/jupyter-panel/jupyter-panel.s
 export class MenuComponent implements OnInit, OnDestroy {
   public executionState: ExecutionState; // set this to true when the workflow is started
   public ExecutionState = ExecutionState; // make Angular HTML access enum definition
+  // Place in the public computing unit's queue, shown on the run button while waiting.
+  public queuePosition = 0;
+  public queueLength = 0;
   public ComputingUnitState = ComputingUnitState; // make Angular HTML access enum definition
   public isWorkflowValid: boolean = true; // this will check whether the workflow error or not
   public isWorkflowEmpty: boolean = false;
@@ -190,6 +194,7 @@ export class MenuComponent implements OnInit, OnDestroy {
     private reportGenerationService: ReportGenerationService,
     private panelService: PanelService,
     private computingUnitStatusService: ComputingUnitStatusService,
+    private warehouseService: WarehouseService,
     protected config: GuiConfigService,
     private router: Router,
     private jupyterPanelService: JupyterPanelService,
@@ -235,6 +240,10 @@ export class MenuComponent implements OnInit, OnDestroy {
       .pipe(untilDestroyed(this))
       .subscribe(event => {
         this.executionState = event.current.state;
+        if (event.current.state === ExecutionState.Queued) {
+          this.queuePosition = event.current.position;
+          this.queueLength = event.current.queueLength;
+        }
         this.applyRunButtonBehavior(this.getRunButtonBehavior());
       });
 
@@ -283,6 +292,17 @@ export class MenuComponent implements OnInit, OnDestroy {
       .pipe(untilDestroyed(this))
       .subscribe(status => {
         this.computingUnitStatus = status;
+        this.applyRunButtonBehavior(this.getRunButtonBehavior());
+      });
+
+    // The warehouse pick also feeds getRunButtonBehavior (#7817); without this
+    // the snapshot keeps saying "Run" after the load leaves no warehouse, and
+    // "Create Warehouse" after one is created. Every relevant transition ends
+    // in a selectWarehouse call, so the pick stream covers them all.
+    this.warehouseService
+      .getSelectedWarehouseId()
+      .pipe(untilDestroyed(this))
+      .subscribe(() => {
         this.applyRunButtonBehavior(this.getRunButtonBehavior());
       });
   }
@@ -408,6 +428,30 @@ export class MenuComponent implements OnInit, OnDestroy {
       };
     }
 
+    // Per-user warehouses enabled but none to write to (#7817): mirror the
+    // Connect state above — same word as the picker's own empty state, and
+    // runWorkflow() routes
+    // the click into the create-warehouse modal. Only in the states whose
+    // button would start a run: mid-execution the button is Pause/Resume/Kill,
+    // and losing the last warehouse must not take that control away.
+    if (
+      this.computingUnitSelectionComponent?.warehouseRequiredButMissing &&
+      [
+        ExecutionState.Uninitialized,
+        ExecutionState.Completed,
+        ExecutionState.Terminated,
+        ExecutionState.Killed,
+        ExecutionState.Failed,
+      ].includes(this.executionState)
+    ) {
+      return {
+        text: "Warehouse",
+        icon: "plus-circle",
+        disable: false,
+        onClick: () => this.runWorkflow(),
+      };
+    }
+
     // Handle execution states when connected to a running computing unit
     switch (this.executionState) {
       case ExecutionState.Uninitialized:
@@ -420,6 +464,15 @@ export class MenuComponent implements OnInit, OnDestroy {
           icon: "play-circle",
           disable: false,
           onClick: () => this.runWorkflow(),
+        };
+      case ExecutionState.Queued:
+        // Clickable, unlike the other waiting states: the click gives up the place in the queue.
+        // killWorkflow() is the same message the backend treats as "cancel" while queued.
+        return {
+          text: this.queueLength > 0 ? `Queued ${this.queuePosition}/${this.queueLength}` : "Queued",
+          icon: "clock-circle",
+          disable: false,
+          onClick: () => this.executeWorkflowService.killWorkflow(),
         };
       case ExecutionState.Initializing:
         return {
@@ -665,11 +718,14 @@ export class MenuComponent implements OnInit, OnDestroy {
     // save that fails keeps the user here with the error shown, rather than leaving with changes
     // that were never stored. The form's own switch (openRegularCanvas) does the same.
     //
-    // Two more things the hand-over must not lose. An autosave already in flight when the switch
+    // Three more things the hand-over must not lose. An autosave already in flight when the switch
     // is clicked: WorkflowPersistService sends saves one at a time and in order, so ours lands after
-    // it and completes after it. And an edit made while our save is out (the page stays editable
-    // until the load): workflowChanged marks it, and the drain below saves once more before handing
-    // over rather than letting the full-page load abort that edit's own debounced autosave.
+    // it and completes after it. A graph edit made while our save is out (the page stays editable
+    // until the load): workflowChanged marks it, and saveThenOpenFormView saves once more before
+    // handing over rather than letting the full-page load abort that edit's own debounced autosave.
+    // And a save queued behind ours (a rename's or a description's, which save through the menu
+    // itself and do not go through workflowChanged): the hand-over leaves only once the service's
+    // save queue has drained.
     this.handingOverToFormView = true;
     this.isSaving = true;
     this.saveThenOpenFormView(wid);
@@ -702,22 +758,30 @@ export class MenuComponent implements OnInit, OnDestroy {
             this.saveThenOpenFormView(target);
             return;
           }
-          this.isSaving = false;
-          this.openFormViewPage(target);
+          // A save queued behind ours (a rename's, a description's: those save through the menu
+          // itself, not the autosave) must land too, or the page load aborts it.
+          this.workflowPersistService
+            .whenSavesDrained()
+            .pipe(untilDestroyed(this))
+            .subscribe(() => {
+              this.isSaving = false;
+              this.openFormViewPage(target);
+            });
         },
       });
   }
 
   /**
-   * The full-page handover to the Form View, apart from the save so the order is testable.
-   * Excluded from coverage as a whole: jsdom cannot navigate, so the specs stub this method and
-   * assert when it is called rather than what it does.
+   * The hand-over to the Form View, apart from the save so the order is testable.
+   *
+   * A route, not a page load: the two views are views of one open workflow, and reloading threw
+   * away everything that made the workflow live -- the shared document, the computing unit
+   * connection, the execution state -- only to rebuild it on the other side. The canvas keeps
+   * the session on its way out (see its ngOnDestroy) and the Form View attaches to it.
    */
-  /* v8 ignore start */
   private openFormViewPage(wid: number): void {
-    window.location.href = `${USER_WORKSPACE}/${wid}/form`;
+    void this.router.navigateByUrl(workspaceFormUrl(wid));
   }
-  /* v8 ignore stop */
 
   /**
    * Calls Markdown Description Component
@@ -907,6 +971,14 @@ export class MenuComponent implements OnInit, OnDestroy {
 
       // Show the modal in the ComputingUnitSelectionComponent, seeding the name field
       this.computingUnitSelectionComponent.showAddComputeUnitModalVisible(defaultName);
+      return;
+    }
+
+    // Per-user warehouses enabled but none to write to (#7817): an execution
+    // must have a warehouse, so lead to the create-warehouse modal instead of
+    // running — the same shape as the Connect flow above.
+    if (this.computingUnitSelectionComponent.warehouseRequiredButMissing) {
+      this.computingUnitSelectionComponent.showAddWarehouseModalVisible();
       return;
     }
 

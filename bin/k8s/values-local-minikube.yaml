@@ -1,0 +1,116 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+# Overlay for running the chart against images built straight into a local
+# minikube node's docker daemon (`eval $(minikube -p <profile> docker-env)`),
+# i.e. never pushed to a registry. Layer it on top of values.yaml:
+#
+#   helm install texera bin/k8s -f bin/k8s/values-local-minikube.yaml
+#
+# Everything it changes follows from "the images exist only on the node":
+# a local registry/tag, and a pull policy that does not go looking for them.
+
+texera:
+  imageRegistry: texera-local
+  imageTag: dev
+
+texeraImages:
+  # Never try to pull: the images are already in the node's daemon, and a pull
+  # of texera-local/* would fail. This also drives the CU pods the manager
+  # creates and the CU-image prepuller.
+  pullPolicy: IfNotPresent
+
+global:
+  # Required by Bitnami sub-charts (postgresql, minio) to allow custom images
+  security:
+    allowInsecureImages: true
+
+# Built from bin/dockerfiles/mounter.dockerfile into the node's daemon.
+mounter:
+  # On here, against the chart default. Mounting is what the demos are about -- a
+  # workflow names a model and the engine mounts that LakeFS repository into the
+  # computing unit rather than copying it -- so without this the AlphaFold operator
+  # has no sequence database to search. The default is off because a computing-unit
+  # pod then carries a hostPath volume, which the `baseline` and `restricted` Pod
+  # Security Standards forbid; minikube enforces neither, so opting in here is safe.
+  enabled: true
+  imagePullPolicy: IfNotPresent
+
+# No dockerfile for this in-tree, so there is nothing to build locally and the
+# published image does not live under the local registry name.
+exampleDataLoader:
+  enabled: false
+
+postgresql:
+  image:
+    repository: groonga/pgroonga
+    tag: latest
+    debug: true
+  auth:
+    postgresPassword: root_password # for executing init script with superuser
+  primary:
+    containerSecurityContext:
+      # groonga/pgroonga needs to write a lock/socket file to /var/run/postgresql
+      readOnlyRootFilesystem: false
+    livenessProbe:
+      initialDelaySeconds: 30
+    readinessProbe:
+      initialDelaySeconds: 30
+    persistence:
+      enabled: true
+      size: 10Gi
+      # minikube ships "standard" (k8s.io/minikube-hostpath); the chart's default
+      # "local-path" provisioner is not installed there, so its PVCs stay Pending.
+      storageClass: standard
+      existingClaim: "postgresql-data-pvc"
+
+rustfs:
+  persistence:
+    enabled: true
+    size: 20Gi
+    # Same reason as postgresql above: the chart defaults to "local-path", whose
+    # provisioner minikube does not install, so the claim would stay Pending and
+    # take the object store -- and therefore LakeFS -- down with it.
+    storageClass: standard
+
+lakefs:
+  # Presigned upload/download URLs must name a host that both the browser and the
+  # in-cluster services can reach. The chart default (localhost:31000) only works when
+  # MinIO's NodePort happens to be on the caller's own loopback, which is true for
+  # neither on minikube -- use the node IP instead.
+  #
+  # This is per-profile: `minikube -p <profile> ip` prints it, and a stale value here
+  # is not a start-up failure -- the cluster comes up and uploads fail later, when a
+  # presigned URL is followed. The address below is the texera-staging profile's.
+  lakefsConfig: |
+    database:
+      type: postgres
+    blockstore:
+      type: s3
+      s3:
+        endpoint: http://texera-rustfs-svc:9000
+        pre_signed_expiry: 15m
+        pre_signed_endpoint: http://192.168.121.2:31000
+        force_path_style: true
+        credentials:
+          access_key_id: texera_rustfs
+          secret_access_key: password
+
+# The pool runs the stock engine image. Pinning the whole pool to a specialised
+# image is what runtime images replaced: a unit now names the image it wants at
+# creation, so AlphaFold 3 is reachable by starting a unit from the alphafold3
+# runtime image rather than by making every unit in the deployment carry it.

@@ -26,4 +26,8 @@ object ComputingUnitConfig {
 
   val localComputingUnitEnabled: Boolean = conf.getBoolean("computing-unit.local.enabled")
   val sharingComputingUnitEnabled: Boolean = conf.getBoolean("computing-unit.sharing.enabled")
+  val publicComputingUnitEnabled: Boolean = conf.getBoolean("computing-unit.public.enabled")
+
+  /** Seconds one run may hold a public unit before the queue reclaims it; 0 disables the watchdog. */
+  val publicComputingUnitMaxRunSeconds: Int = conf.getInt("computing-unit.public.max-run-seconds")
 }

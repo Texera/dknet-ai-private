@@ -545,15 +545,28 @@ class ComputingUnitManagingResourceSpec
     requiredEnvNames.foreach(name => thrown.getMessage should include(name))
   }
 
+  private val stateCleanup = EnvironmentalVariable.ENV_WEB_SERVER_WORKFLOW_STATE_CLEANUP_IN_SECONDS
+  private val resultTtl = EnvironmentalVariable.ENV_RESULT_CLEANUP_TTL_IN_SECONDS
+
+  private def only(name: String, value: String): String => Option[String] =
+    n => if (n == name) Some(value) else None
+
   "optionalComputingUnitEnv" should "forward an override that is set" in {
-    ComputingUnitManagingResource.optionalComputingUnitEnv(_ => Some("2048")) shouldBe
+    ComputingUnitManagingResource.optionalComputingUnitEnv(only(payloadSize, "2048")) shouldBe
       Map(payloadSize -> "2048")
   }
 
   // HOCON refuses " 2048" as an int, and the unit then dies at startup naming nothing.
   it should "trim what it forwards" in {
-    ComputingUnitManagingResource.optionalComputingUnitEnv(_ => Some(" 2048\n")) shouldBe
+    ComputingUnitManagingResource.optionalComputingUnitEnv(only(payloadSize, " 2048\n")) shouldBe
       Map(payloadSize -> "2048")
+  }
+
+  // A unit reads these from its own environment; set only on the manager, they change nothing,
+  // and a run's results are still deleted 30 seconds after its last viewer leaves.
+  it should "forward the result-retention settings" in {
+    val env = Map(stateCleanup -> "604800", resultTtl -> "1209600")
+    ComputingUnitManagingResource.optionalComputingUnitEnv(env.get) shouldBe env
   }
 
   // application.conf already defaults this to 1024; forwarding "" would override the default
@@ -561,6 +574,18 @@ class ComputingUnitManagingResourceSpec
   it should "forward nothing when unset or blank" in {
     ComputingUnitManagingResource.optionalComputingUnitEnv(_ => None) shouldBe empty
     ComputingUnitManagingResource.optionalComputingUnitEnv(_ => Some("  ")) shouldBe empty
+  }
+
+  // A unit decides for itself whether a run has to queue, so it needs the feature flag in its own
+  // environment. Set only on this service, a public unit reads the feature as off and runs every
+  // workflow straight away -- which is the behaviour public units exist to replace, and it fails
+  // silently. Forwarding it is what makes the queue engage at all.
+  it should "forward the public computing unit settings to the unit" in {
+    val env = Map(
+      EnvironmentalVariable.ENV_COMPUTING_UNIT_PUBLIC_ENABLED -> "true",
+      EnvironmentalVariable.ENV_COMPUTING_UNIT_PUBLIC_MAX_RUN_SECONDS -> "3600"
+    )
+    ComputingUnitManagingResource.optionalComputingUnitEnv(env.get) shouldBe env
   }
 
 }

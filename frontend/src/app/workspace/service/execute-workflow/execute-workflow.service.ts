@@ -48,6 +48,8 @@ import { intersection } from "../../../common/util/set";
 import { WorkflowSettings } from "../../../common/type/workflow";
 
 import { ComputingUnitStatusService } from "../../../common/service/computing-unit/computing-unit-status/computing-unit-status.service";
+import { WarehouseService } from "../../../common/service/warehouse/warehouse.service";
+import { GuiConfigService } from "../../../common/service/gui-config.service";
 
 // TODO: change this declaration
 export const FORM_DEBOUNCE_TIME_MS = 150;
@@ -100,7 +102,9 @@ export class ExecuteWorkflowService {
     private workflowStatusService: WorkflowStatusService,
     private notificationService: NotificationService,
     @Inject(DOCUMENT) private document: Document,
-    private computingUnitStatusService: ComputingUnitStatusService
+    private computingUnitStatusService: ComputingUnitStatusService,
+    private warehouseService: WarehouseService,
+    private config: GuiConfigService
   ) {
     workflowWebsocketService.websocketEvent().subscribe(event => {
       switch (event.type) {
@@ -152,9 +156,25 @@ export class ExecuteWorkflowService {
           case ExecutionState.Failed:
             // for failed state, backend will send an additional message after this status event.
             return undefined;
+          case ExecutionState.Queued:
+            // Queueing is reported by WorkflowQueueStatusEvent, which carries the position; a
+            // bare state event cannot say where in the queue the workflow is, so ignore it.
+            return undefined;
           default:
             return { state: newState };
         }
+      case "WorkflowQueueStatusEvent":
+        // Leaving the queue is not a state of its own: the run was either admitted, in which
+        // case the execution's own events take over immediately, or cancelled, which the kill
+        // path already reported. Either way there is nothing to show here.
+        if (!event.queued) {
+          return undefined;
+        }
+        return {
+          state: ExecutionState.Queued,
+          position: event.position,
+          queueLength: event.queueLength,
+        };
       case "RecoveryStartedEvent":
         return { state: ExecutionState.Recovering };
       case "OperatorCurrentTuplesUpdateEvent":
@@ -207,6 +227,9 @@ export class ExecuteWorkflowService {
       targetOperatorId
     );
     const settings = this.workflowActionService.getWorkflowSettings();
+    if (this.refuseToRunWithoutWarehouse()) {
+      return;
+    }
     this.resetExecutionState();
     this.workflowStatusService.resetStatus();
     this.sendExecutionRequest(executionName, logicalPlan, settings, emailNotificationEnabled);
@@ -219,6 +242,9 @@ export class ExecuteWorkflowService {
   public executeWorkflowWithReplay(replayExecutionInfo: ReplayExecutionInfo): void {
     const logicalPlan = ExecuteWorkflowService.getLogicalPlanRequest(this.workflowActionService.getTexeraGraph());
     const settings = this.workflowActionService.getWorkflowSettings();
+    if (this.refuseToRunWithoutWarehouse()) {
+      return;
+    }
     this.resetExecutionState();
     this.workflowStatusService.resetStatus();
     this.sendExecutionRequest(
@@ -228,6 +254,21 @@ export class ExecuteWorkflowService {
       false,
       replayExecutionInfo
     );
+  }
+
+  /**
+   * While the deployment requires a warehouse (#7817) and none is picked,
+   * refuses with a toast and returns true. Checked at every public entry
+   * point before it resets the previous execution's state — a refused click
+   * must not wipe the results already on screen (#7751 adds the backend-side
+   * rejection).
+   */
+  private refuseToRunWithoutWarehouse(): boolean {
+    if (!this.config.env.warehouseEnabled || this.warehouseService.getSelectedWarehouseIdValue() !== undefined) {
+      return false;
+    }
+    this.notificationService.error("Create or select a warehouse before running.");
+    return true;
   }
 
   public sendExecutionRequest(
@@ -240,6 +281,11 @@ export class ExecuteWorkflowService {
     // Get the current computing unit ID from the status service
     const selectedUnit = this.computingUnitStatusService.getSelectedComputingUnitValue();
     const computingUnitId = selectedUnit?.computingUnit.cuid;
+
+    // The warehouse this execution writes to (#7817); undefined serializes away,
+    // which the backend today reads as the shared default storage (#7751
+    // tightens that to a rejection while the feature is enabled).
+    const warehouseId = this.warehouseService.getSelectedWarehouseIdValue();
 
     // Log a warning if no computing unit is selected
     if (computingUnitId === undefined) {
@@ -254,6 +300,7 @@ export class ExecuteWorkflowService {
       workflowSettings: workflowSettings,
       emailNotificationEnabled: emailNotificationEnabled,
       computingUnitId: computingUnitId, // Include the computing unit ID
+      warehouseId: warehouseId,
     };
     // wait for the form debounce to complete, then send
     window.setTimeout(() => {
@@ -397,6 +444,9 @@ export class ExecuteWorkflowService {
       case ExecutionState.Resuming:
       case ExecutionState.Running:
       case ExecutionState.Initializing:
+      // Queued counts as in-execution: the plan was submitted when Run was pressed, so editing
+      // it while waiting would not change what eventually runs.
+      case ExecutionState.Queued:
         this.workflowActionService.disableWorkflowModification();
         return;
       default:

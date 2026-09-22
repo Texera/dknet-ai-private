@@ -93,11 +93,13 @@ DROP TYPE IF EXISTS privilege_enum CASCADE;
 DROP TYPE IF EXISTS action_enum CASCADE;
 DROP TYPE IF EXISTS provider_type_enum CASCADE;
 DROP TYPE IF EXISTS default_view_enum CASCADE;
+DROP TYPE IF EXISTS computing_unit_access_scope_enum CASCADE;
 
 CREATE TYPE user_role_enum AS ENUM ('INACTIVE', 'RESTRICTED', 'REGULAR', 'ADMIN');
 CREATE TYPE action_enum AS ENUM ('like', 'unlike', 'view', 'clone');
 CREATE TYPE privilege_enum AS ENUM ('NONE', 'READ', 'WRITE');
 CREATE TYPE workflow_computing_unit_type_enum AS ENUM ('local', 'kubernetes');
+CREATE TYPE computing_unit_access_scope_enum AS ENUM ('PRIVATE', 'PUBLIC');
 CREATE TYPE provider_type_enum AS ENUM ('LOCAL', 'GOOGLE', 'ORCID', 'APPLE');
 CREATE TYPE user_warehouse_flavor_enum AS ENUM ('local', 'aws');
 CREATE TYPE default_view_enum AS ENUM ('CANVAS', 'FORM');
@@ -250,8 +252,18 @@ CREATE TABLE IF NOT EXISTS workflow_computing_unit
     type               workflow_computing_unit_type_enum,
     uri                TEXT NOT NULL DEFAULT '',
     resource           TEXT DEFAULT '',
+    -- Who may use this unit. Orthogonal to `type`, which is the runtime kind: a public unit is
+    -- still local or kubernetes. 'public' grants every authenticated user WRITE without a
+    -- computing_unit_user_access row; uid then records the administrator who created it.
+    access_scope       computing_unit_access_scope_enum NOT NULL DEFAULT 'PRIVATE',
     FOREIGN KEY (uid) REFERENCES "user"(uid) ON DELETE CASCADE
 );
+
+-- Two live public units may not share a name; users pick them by name. Terminated units keep
+-- theirs, and private units are namespaced by their owner.
+CREATE UNIQUE INDEX IF NOT EXISTS ux_wcu_public_name
+    ON workflow_computing_unit (name)
+    WHERE access_scope = 'PUBLIC' AND terminate_time IS NULL;
 
 -- does not restrict who may use the image.
 CREATE TABLE IF NOT EXISTS cu_image

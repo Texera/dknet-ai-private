@@ -387,23 +387,26 @@ export class JointUIService {
   }
 
   /**
-   * Updates operator state, worker labels, and per-port counts using latest statistics.
-   * Cache labels are applied for cached outputs and positioned to avoid overlapping the outgoing edge.
+   * Renders the statistics sub-concept only (port row counts, worker count and
+   * cache labels); the operator's execution state is rendered separately via
+   * {@link changeOperatorState}.
+   *
+   * `operatorState` is read-only here: a cached operator shows "-" for inputs and
+   * non-materialized outputs and labels its workers "from cache". Before #8301 the
+   * state travelled inside `statistics`; it is now a separate argument because
+   * `OperatorStatistics` no longer carries it. Cache labels are positioned to avoid
+   * overlapping the outgoing edge.
    */
   public changeOperatorStatistics(
     jointPaper: joint.dia.Paper,
     operatorID: string,
     statistics: OperatorStatistics | undefined,
-    isSource: boolean,
-    isSink: boolean,
+    operatorState?: OperatorState,
     cachePortLabels?: Record<string, string>
   ): void {
     if (!statistics) {
-      this.changeOperatorState(jointPaper, operatorID, OperatorState.Uninitialized);
       return;
     }
-
-    this.changeOperatorState(jointPaper, operatorID, statistics.operatorState);
 
     const element = jointPaper.getModelById(operatorID) as joint.shapes.devs.Model;
     const allPorts = element.getPorts();
@@ -413,7 +416,7 @@ export class JointUIService {
     const inputMetrics = statistics.inputPortMetrics;
     const outputMetrics = statistics.outputPortMetrics;
     // Cached operators show "-" for inputs and non-materialized outputs, and label workers as "from cache".
-    const isSkippedFromCache = statistics.operatorState === OperatorState.CompletedFromCache;
+    const isSkippedFromCache = operatorState === OperatorState.CompletedFromCache;
 
     const workerCount = statistics.numWorkers ?? 1;
     const workerCountLabel = isSkippedFromCache ? "from cache" : "#workers: " + String(workerCount);
@@ -462,7 +465,7 @@ export class JointUIService {
     });
     const effectiveCacheLabels = isSkippedFromCache ? cachePortLabels : undefined;
     this.changeOperatorCacheLabels(jointPaper, operatorID, effectiveCacheLabels);
-    this.changeOperatorState(jointPaper, operatorID, statistics.operatorState);
+    // State is deliberately not rendered here: since #8301 the state stream owns it.
   }
 
   /**

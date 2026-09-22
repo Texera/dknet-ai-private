@@ -190,6 +190,9 @@ lazy val ComputingUnitManagingService = (project in file("computing-unit-managin
     // from the repo root so MockTexeraDB can resolve sql/texera_ddl.sql by relative path.
     Test / fork := true,
     Test / envVars += "COMPUTING_UNIT_SHARING_ENABLED" -> "true",
+    // Same load-time-val story for public units: the listing and admin-create paths only exist
+    // when the flag is on, so the test JVM turns it on.
+    Test / envVars += "COMPUTING_UNIT_PUBLIC_ENABLED" -> "true",
     Test / forkOptions := (Test / forkOptions).value
       .withWorkingDirectory((ThisBuild / baseDirectory).value),
     // Isolate the sharing-disabled suite into its own forked JVM without
@@ -234,6 +237,8 @@ lazy val FileService = (project in file("file-service"))
   )
 
 lazy val WorkflowOperator = (project in file("common/workflow-operator")).settings(commonModuleSettingsWithVendored).dependsOn(WorkflowCore)
+  .configs(Test)
+  .dependsOn(DAO % "test->test") // MockTexeraDB, to force a UDF's execution-time binding
 lazy val WorkflowCompiler = (project in file("common/workflow-compiler"))
   .settings(commonModuleSettings)
   .configs(Test)

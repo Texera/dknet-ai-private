@@ -97,6 +97,7 @@ const computingUnitFixture: DashboardWorkflowComputingUnit = {
     terminateTime: undefined,
     type: "kubernetes",
     uri: "urn:texera:cu:9",
+    accessScope: "PRIVATE",
     resource: {
       cpuLimit: "2",
       memoryLimit: "4Gi",

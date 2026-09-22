@@ -47,6 +47,8 @@ export class MockGuiConfigService {
     defaultDataTransferBatchSize: 100,
     workflowEmailNotificationEnabled: false,
     sharingComputingUnitEnabled: false,
+    publicComputingUnitEnabled: false,
+    warehouseEnabled: false,
     operatorConsoleMessageBufferSize: 1000,
     defaultLocalUser: { username: "", password: "" },
     activeTimeInMinutes: 15,

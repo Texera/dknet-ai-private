@@ -30,10 +30,14 @@ import org.apache.texera.amber.util.JSONUtils.objectMapper
 import org.apache.texera.auth.util.HeaderField
 import org.apache.texera.dao.jooq.generated.enums.PrivilegeEnum
 import org.apache.texera.dao.jooq.generated.tables.pojos.User
-import org.apache.texera.web.model.websocket.event.{WorkflowErrorEvent, WorkflowStateEvent}
+import org.apache.texera.web.model.websocket.event.{
+  WorkflowErrorEvent,
+  WorkflowQueueStatusEvent,
+  WorkflowStateEvent
+}
 import org.apache.texera.web.model.websocket.request._
 import org.apache.texera.web.model.websocket.response._
-import org.apache.texera.web.service.WorkflowService
+import org.apache.texera.web.service.{ComputingUnitExecutionQueue, WorkflowService}
 import org.apache.texera.web.{ServletAwareConfigurator, SessionState}
 
 import java.time.Instant
@@ -68,6 +72,20 @@ class WorkflowWebsocketResource extends LazyLogging {
     val workflowState =
       WorkflowService.getOrCreate(WorkflowIdentity(wid), cuid)
     sessionState.subscribe(workflowState)
+
+    // Re-send the queue position, after subscribing, when this workflow is waiting for a public
+    // computing unit. subscribe() replays two things in order: the cross-execution stores (which
+    // hold the queue position), then the last execution's own state. A workflow that finished a
+    // run and was then queued again therefore receives its position first and the previous run's
+    // COMPLETED/FAILED state second, and the stale one wins -- the run button falls back to "Run"
+    // as though nothing had been submitted. Sending it last makes the queue the final word.
+    val queueState = workflowState.stateStore.queueStore.getState
+    if (queueState.queued) {
+      sessionState.send(
+        WorkflowQueueStatusEvent(queueState.queued, queueState.position, queueState.queueLength)
+      )
+    }
+
     sessionState.send(ClusterStatusUpdateEvent(ClusterListener.numWorkerNodesInCluster))
   }
 
@@ -110,16 +128,38 @@ class WorkflowWebsocketResource extends LazyLogging {
           }
           workflowStateOpt match {
             case Some(workflow) =>
-              sessionState.send(WorkflowStateEvent("Initializing"))
-              synchronized {
-                workflow.initExecutionService(
-                  workflowExecuteRequest,
-                  userOpt,
-                  session.getRequestURI
-                )
+              // The WorkflowService's own cuid, not the request's: cancel and dispose reach the
+              // queue through it, so submitting under a different one would leave an entry that
+              // nothing can ever release.
+              val cuid = workflow.computingUnitId
+              if (ComputingUnitExecutionQueue.isQueuedComputingUnit(cuid)) {
+                // A public unit runs one workflow at a time. The queue starts this run itself
+                // once the unit is free, and reports the wait in the meantime; do not announce
+                // "Initializing" here, since the run may not be starting at all yet.
+                ComputingUnitExecutionQueue
+                  .forComputingUnit(cuid)
+                  .submit(workflow, workflowExecuteRequest, userOpt, session.getRequestURI)
+              } else {
+                sessionState.send(WorkflowStateEvent("Initializing"))
+                synchronized {
+                  workflow.initExecutionService(
+                    workflowExecuteRequest,
+                    userOpt,
+                    session.getRequestURI
+                  )
+                }
               }
             case None => throw new IllegalStateException("workflow is not initialized")
           }
+        case _: WorkflowKillRequest
+            if workflowStateOpt.exists(workflow =>
+              ComputingUnitExecutionQueue
+                .forComputingUnit(workflow.computingUnitId)
+                .cancel(workflow.workflowId)
+            ) =>
+          // The run was still waiting its turn, so there is no execution to kill: dropping it
+          // from the queue is the whole of the cancellation.
+          sessionState.send(WorkflowStateEvent("Uninitialized"))
         case other =>
           workflowStateOpt.map(_.executionService.getValue) match {
             case Some(value) => value.wsInput.onNext(other, uidOpt)

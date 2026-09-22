@@ -27,6 +27,7 @@ import jakarta.ws.rs._
 import jakarta.ws.rs.core.{MediaType, Response}
 import org.apache.commons.lang3.StringUtils
 import org.apache.texera.auth.JwtAuth.jwtClaims
+import org.apache.texera.auth.util.ComputingUnitAccess
 import org.apache.texera.auth.{JwtAuth, SessionUser}
 import org.apache.texera.common.config.KubernetesConfig.{
   cpuLimitOptions,
@@ -43,7 +44,9 @@ import org.apache.texera.common.config.{
 }
 import org.apache.texera.dao.SqlServer
 import org.apache.texera.dao.SqlServer.withTransaction
+import org.apache.texera.dao.jooq.generated.Tables.WORKFLOW_COMPUTING_UNIT
 import org.apache.texera.dao.jooq.generated.enums.{
+  ComputingUnitAccessScopeEnum,
   PrivilegeEnum,
   UserRoleEnum,
   WorkflowComputingUnitTypeEnum
@@ -122,13 +125,22 @@ object ComputingUnitManagingResource {
     // ENV_AUTH_JWT_SECRET is intentionally absent: this fork supplies it from AuthConfig.
   )
 
-  // Overrides, forwarded only when set: application.conf defaults the payload size to 1024,
-  // so its absence is not an error. USER_SYS_ENABLED and
+  // Overrides, forwarded only when set: application.conf defaults every one of these, so
+  // their absence is not an error. The two cleanup settings decide how long a unit keeps a
+  // run's results -- the web-server one is how soon after its last viewer leaves a workflow's
+  // state and results are deleted -- and a unit only honours them if they reach it here. USER_SYS_ENABLED and
   // SCHEDULE_GENERATOR_ENABLE_COST_BASED_SCHEDULE_GENERATOR are absent from both lists --
   // their conf keys went away with #3831 and #3542, so nothing reads them.
   // TODO: use AmberConfig here; it is only accessible in workflow-executing-service
   private val optionalComputingUnitEnvNames: Seq[String] = Seq(
-    EnvironmentalVariable.ENV_MAX_WORKFLOW_WEBSOCKET_REQUEST_PAYLOAD_SIZE_KB
+    EnvironmentalVariable.ENV_MAX_WORKFLOW_WEBSOCKET_REQUEST_PAYLOAD_SIZE_KB,
+    EnvironmentalVariable.ENV_WEB_SERVER_WORKFLOW_STATE_CLEANUP_IN_SECONDS,
+    EnvironmentalVariable.ENV_RESULT_CLEANUP_TTL_IN_SECONDS,
+    // A unit decides for itself whether to queue a run, so the feature flag and the watchdog
+    // have to reach the unit's own pod. Without the flag the unit reads it as off and runs
+    // everything straight away, which on a public unit is the bug this feature exists to fix.
+    EnvironmentalVariable.ENV_COMPUTING_UNIT_PUBLIC_ENABLED,
+    EnvironmentalVariable.ENV_COMPUTING_UNIT_PUBLIC_MAX_RUN_SECONDS
   )
 
   /**
@@ -253,6 +265,9 @@ class ComputingUnitManagingResource {
     getComputingUnitByCuid(ctx, cuid).getUid == uid
   }
 
+  private def isPublicComputingUnit(ctx: DSLContext, cuid: Integer): Boolean =
+    getComputingUnitByCuid(ctx, cuid).getAccessScope == ComputingUnitAccessScopeEnum.PUBLIC
+
   private def getSupportedComputingUnitTypes: List[String] = {
     val allTypes = WorkflowComputingUnitTypeEnum.values().map(_.getLiteral).toList
     allTypes.filter {
@@ -343,6 +358,19 @@ class ComputingUnitManagingResource {
   def createWorkflowComputingUnit(
       param: WorkflowComputingUnitCreationParams,
       @Auth user: SessionUser
+  ): DashboardWorkflowComputingUnit =
+    createComputingUnit(param, user, ComputingUnitAccessScopeEnum.PRIVATE)
+
+  /**
+    * Creates a unit at the given access scope. The scope is a parameter rather than a field on
+    * [[ComputingUnitManagingResource.WorkflowComputingUnitCreationParams]] so that a REGULAR user
+    * cannot ask for a public unit through /create: the only way to reach `public` is
+    * AdminComputingUnitResource's ADMIN-only endpoint.
+    */
+  private[resource] def createComputingUnit(
+      param: WorkflowComputingUnitCreationParams,
+      user: SessionUser,
+      accessScope: ComputingUnitAccessScopeEnum
   ): DashboardWorkflowComputingUnit = {
     if (param.name.trim.isEmpty) {
       throw new ForbiddenException("Computing unit name cannot be empty.")
@@ -440,12 +468,16 @@ class ComputingUnitManagingResource {
     withTransaction(context) { ctx =>
       val wcDao = new WorkflowComputingUnitDao(ctx.configuration())
 
+      // A public unit is a deployment-wide resource an administrator provisions, not personal
+      // capacity: it neither consumes the creator's quota nor counts towards it.
       val units = wcDao
         .fetchByUid(user.getUid)
         .asScala
         .filter(_.getTerminateTime == null) // Filter out terminated units
+        .filter(_.getAccessScope != ComputingUnitAccessScopeEnum.PUBLIC)
 
       if (
+        accessScope != ComputingUnitAccessScopeEnum.PUBLIC &&
         units.size >= maxNumOfRunningComputingUnitsPerUser && cuType == WorkflowComputingUnitTypeEnum.kubernetes
       ) {
         throw InsufficientComputingUnitQuota(maxNumOfRunningComputingUnitsPerUser)
@@ -491,11 +523,33 @@ class ComputingUnitManagingResource {
       }
 
       val computingUnit = new WorkflowComputingUnit()
-      val userToken = JwtAuth.jwtToken(jwtClaims(user.user))
+
+      // A private unit belongs to one user, so it carries that user's token and every run on it
+      // reads files as them. A public unit belongs to nobody: baking the creating administrator's
+      // token into the pod would make every user's run read datasets with the administrator's
+      // access. It is left out entirely, and each run supplies its own identity instead
+      // (RunIdentity / UserTokenProvider in the unit) -- absent rather than blank, so a unit that
+      // somehow misses the per-run identity fails to read rather than silently reading as an admin.
+      val userIdentityEnv: Map[String, Any] =
+        if (accessScope == ComputingUnitAccessScopeEnum.PUBLIC) Map.empty
+        else Map(EnvironmentalVariable.ENV_USER_JWT_TOKEN -> JwtAuth.jwtToken(jwtClaims(user.user)))
+
+      // Fork: this deployment hands a private unit the LakeFS admin credentials so that a CU can
+      // read files in dev mode. That must not reach a public unit for the same reason the creating
+      // administrator's token must not: every user's run on it would read every dataset as the
+      // administrator, which is precisely what the per-run identity above exists to prevent.
+      def lakefsAdminEnv(scope: ComputingUnitAccessScopeEnum): Map[String, Any] =
+        if (scope == ComputingUnitAccessScopeEnum.PUBLIC) Map.empty
+        else
+          Map(
+            EnvironmentalVariable.ENV_LAKEFS_AUTH_USERNAME -> StorageConfig.lakefsUsername,
+            EnvironmentalVariable.ENV_LAKEFS_AUTH_PASSWORD -> StorageConfig.lakefsPassword
+          )
       computingUnit.setUid(user.getUid)
       computingUnit.setName(param.name)
       computingUnit.setCreationTime(new Timestamp(System.currentTimeMillis()))
       computingUnit.setType(WorkflowComputingUnitTypeEnum.lookupLiteral(param.unitType))
+      computingUnit.setAccessScope(accessScope)
       computingUnit.setResource(resourceJson)
 
       // Set URI during initial insert for local only
@@ -539,13 +593,9 @@ class ComputingUnitManagingResource {
             param.cpuLimit,
             param.memoryLimit,
             param.gpuLimit,
-            computingUnitEnvironmentVariables ++ Map(
-              EnvironmentalVariable.ENV_USER_JWT_TOKEN -> userToken,
-              EnvironmentalVariable.ENV_JAVA_OPTS -> s"-Xmx${param.jvmMemorySize} $jdk17AddOpens",
-              EnvironmentalVariable.ENV_LAKEFS_AUTH_USERNAME -> StorageConfig.lakefsUsername,
-              EnvironmentalVariable.ENV_LAKEFS_AUTH_PASSWORD -> StorageConfig.lakefsPassword,
-              EnvironmentalVariable.ENV_LAKEFS_ENDPOINT -> StorageConfig.lakefsEndpoint
-            ),
+            computingUnitEnvironmentVariables ++ userIdentityEnv ++ Map(
+              EnvironmentalVariable.ENV_JAVA_OPTS -> s"-Xmx${param.jvmMemorySize} $jdk17AddOpens"
+            ) ++ lakefsAdminEnv(accessScope),
             Some(param.shmSize),
             param.gpuModel,
             curatedImage
@@ -614,13 +664,34 @@ class ComputingUnitManagingResource {
           (List.empty[WorkflowComputingUnit], Map.empty[Integer, PrivilegeEnum])
         }
 
+      // Public units are offered to everybody, so they are listed for every caller without an
+      // access row. Fetched in SQL rather than through the DAO: fetchByAccessScope would pull
+      // terminated ones too, and this list is rendered on every poll.
+      val publicUnits =
+        if (ComputingUnitConfig.publicComputingUnitEnabled) {
+          ctx
+            .selectFrom(WORKFLOW_COMPUTING_UNIT)
+            .where(
+              WORKFLOW_COMPUTING_UNIT.ACCESS_SCOPE
+                .eq(ComputingUnitAccessScopeEnum.PUBLIC)
+                .and(WORKFLOW_COMPUTING_UNIT.TERMINATE_TIME.isNull)
+            )
+            .fetchInto(classOf[WorkflowComputingUnit])
+            .asScala
+            .toList
+        } else {
+          List.empty[WorkflowComputingUnit]
+        }
+
       val userDao = new UserDao(ctx.configuration())
 
       // Pair each unit with the caller's privilege (owned default to WRITE), one row per cuid, so
-      // a unit that is both owned and shared is reconciled/rendered exactly once.
+      // a unit that is both owned and shared is reconciled/rendered exactly once. Public units
+      // come last so that an administrator's own public unit keeps its owned entry.
       val unitsWithPrivilege =
         (ownedUnits.map(u => (u, PrivilegeEnum.WRITE)) ++
-          sharedUnits.map(u => (u, sharedUnitInfo(u.getCuid))))
+          sharedUnits.map(u => (u, sharedUnitInfo(u.getCuid))) ++
+          publicUnits.map(u => (u, PrivilegeEnum.WRITE)))
           .distinctBy { case (unit, _) => unit.getCuid }
           .filter { case (unit, _) => unit.getTerminateTime == null }
       val privilegeByCuid = unitsWithPrivilege.map {
@@ -685,22 +756,12 @@ class ComputingUnitManagingResource {
       status = ComputingUnitHelpers.getComputingUnitStatus(unit).toString,
       metrics = ComputingUnitHelpers.getComputingUnitMetrics(unit),
       isOwner = unit.getUid.equals(user.getUid),
-      accessPrivilege = {
-        val cuAccessDao = new ComputingUnitUserAccessDao(context.configuration())
-        val access = cuAccessDao
-          .fetchByUid(user.getUid)
-          .asScala
-          .find(access => access.getCuid.equals(cuid))
-
-        if (access.isDefined) {
-          access.get.getPrivilege
-        } else if (unit.getUid.equals(user.getUid)) {
-          PrivilegeEnum.WRITE
-        } else {
-          // Default privilege for non-owners without explicit access
-          PrivilegeEnum.NONE
-        }
-      },
+      // Asked of ComputingUnitAccess rather than worked out again here. This endpoint is polled
+      // every couple of seconds for the selected unit while /list refreshes on the same timer, so
+      // any disagreement between the two shows up as a run button flickering between its states
+      // and settling on whichever replied last. A second copy of the rules had already drifted:
+      // it answered NONE for a public unit, which every user may in fact run on.
+      accessPrivilege = ComputingUnitAccess.getComputingUnitAccess(cuid, user.getUid),
       ownerAvatar,
       ownerUsername
     )
@@ -720,11 +781,20 @@ class ComputingUnitManagingResource {
       @PathParam("cuid") cuid: Integer,
       @Auth user: SessionUser
   ): Response = {
-    // ADMINs may terminate any unit; everyone else must own it.
-    if (!user.isRoleOf(UserRoleEnum.ADMIN) && !userOwnComputingUnit(context, cuid, user.getUid)) {
+    // ADMINs may terminate any unit; everyone else must own it. A public unit is never
+    // "owned" in the sense that matters here -- every user holds WRITE on it -- so it takes
+    // ADMIN even from the administrator who created it.
+    val isPublic = isPublicComputingUnit(context, cuid)
+    if (
+      !user.isRoleOf(UserRoleEnum.ADMIN) &&
+      (isPublic || !userOwnComputingUnit(context, cuid, user.getUid))
+    ) {
       return Response
         .status(Response.Status.BAD_REQUEST)
-        .entity(s"User has no access to the computing unit")
+        .entity(
+          if (isPublic) "Only an administrator can terminate a public computing unit"
+          else "User has no access to the computing unit"
+        )
         .build()
     }
 
@@ -762,8 +832,16 @@ class ComputingUnitManagingResource {
       @PathParam("name") name: String,
       @Auth user: SessionUser
   ): Response = {
-    // Verify ownership or write access
-    if (
+    // Verify ownership or write access. A public unit grants WRITE to everyone, which is
+    // permission to *run* on it, not to rename it for every other user; that takes ADMIN.
+    if (isPublicComputingUnit(context, cuid)) {
+      if (!user.isRoleOf(UserRoleEnum.ADMIN)) {
+        return Response
+          .status(Response.Status.FORBIDDEN)
+          .entity("Only an administrator can rename a public computing unit")
+          .build()
+      }
+    } else if (
       !userOwnComputingUnit(context, cuid, user.getUid) &&
       !ComputingUnitAccessResource.hasWriteAccess(cuid, user.getUid)
     ) {

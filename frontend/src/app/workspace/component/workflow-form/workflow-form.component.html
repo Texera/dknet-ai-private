@@ -396,7 +396,7 @@
       [class.err]="runError"
       [attr.role]="runError ? 'alert' : 'status'"
       *ngIf="runError || isRunning">
-      {{ runError || "Running -- this keeps going if you look away." }}
+      {{ runError || runNote }}
     </p>
 
     <!-- The workflow, out of the way unless the reader goes looking. Results are added on top of

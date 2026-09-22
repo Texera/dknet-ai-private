@@ -134,6 +134,9 @@ rustfs:
     rustfs:
       access_key: texera_rustfs
       secret_key: password
+  extraEnv:
+    - name: RUSTFS_CORS_ALLOWED_ORIGINS
+      value: "*"
   config:
     rustfs:
       # Must match storage.s3.region: the region is part of the SigV4 scope.
@@ -399,8 +402,12 @@ litellm:
 
 # Images an administrator registers, which a computing unit can then be started from.
 curatedImages:
-  # Off until the UI to manage these ships.
-  enabled: false
+  enabled: true
+  prepull:
+    # Pull every ready image onto every node, so the first unit there does not wait for it.
+    # Costs node disk: each node holds each ready image. Turning it off also removes the
+    # pre-pulls already made.
+    enabled: true
 
 # headless service for the access of computing units
 workflowComputingUnitPool:
@@ -447,6 +454,8 @@ mounter:
   imagePullPolicy: IfNotPresent
   port: 8100
   hostMountRoot: /var/lib/texera-mounts
+  # Where a computing-unit pod sees its mounts.
+  podMountRoot: /mnt/texera-mounts
   serviceAccountName: texera-mounter-service-account
   # The mounter authenticates its callers: a caller presents a service-account token
   # projected for the mounter's audience, which the mounter verifies with TokenReview and
@@ -509,6 +518,17 @@ texeraEnvVars:
     value: "true"
   - name: COMPUTING_UNIT_SHARING_ENABLED
     value: "true"
+  # Public computing units: units an administrator creates that every user may run on. A public
+  # unit runs one workflow at a time and queues the rest, taking turns between users, so turning
+  # this off also removes the queue -- nothing else queues. Forwarded to each unit's own pod by
+  # the managing service, because a unit decides for itself whether to queue a run.
+  - name: COMPUTING_UNIT_PUBLIC_ENABLED
+    value: "true"
+  # Seconds one run may hold a public unit before the queue reclaims it, so a single wedged
+  # workflow cannot block every other user. 0 disables the watchdog; the run itself is never
+  # killed, the unit is only handed on.
+  - name: COMPUTING_UNIT_PUBLIC_MAX_RUN_SECONDS
+    value: "0"
   - name: USER_SYS_INVITE_ONLY
     value: "true"
   # On by default; set to "false" to accept addresses unproven. This must agree with the

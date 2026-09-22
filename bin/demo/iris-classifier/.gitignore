@@ -1,0 +1,2 @@
+# ~1 GB of weights, rebuildable with `python src/train.py`.
+artifacts/

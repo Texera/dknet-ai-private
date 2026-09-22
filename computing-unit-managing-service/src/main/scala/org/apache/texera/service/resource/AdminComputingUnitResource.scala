@@ -21,15 +21,19 @@ package org.apache.texera.service.resource
 
 import io.dropwizard.auth.Auth
 import jakarta.annotation.security.RolesAllowed
-import jakarta.ws.rs.{GET, Path, Produces}
+import jakarta.ws.rs.{Consumes, ForbiddenException, GET, POST, Path, Produces}
 import jakarta.ws.rs.core.MediaType
 import org.apache.texera.auth.SessionUser
+import org.apache.texera.common.config.ComputingUnitConfig
 import org.apache.texera.dao.SqlServer
 import org.apache.texera.dao.jooq.generated.Tables.WORKFLOW_COMPUTING_UNIT
-import org.apache.texera.dao.jooq.generated.enums.PrivilegeEnum
+import org.apache.texera.dao.jooq.generated.enums.{ComputingUnitAccessScopeEnum, PrivilegeEnum}
 import org.apache.texera.dao.jooq.generated.tables.daos.{UserDao, WorkflowComputingUnitDao}
 import org.apache.texera.dao.jooq.generated.tables.pojos.WorkflowComputingUnit
-import org.apache.texera.service.resource.ComputingUnitManagingResource.DashboardWorkflowComputingUnit
+import org.apache.texera.service.resource.ComputingUnitManagingResource.{
+  DashboardWorkflowComputingUnit,
+  WorkflowComputingUnitCreationParams
+}
 import org.apache.texera.service.util.ComputingUnitHelpers
 import org.jooq.DSLContext
 
@@ -52,6 +56,27 @@ object AdminComputingUnitResource {
 class AdminComputingUnitResource {
 
   import AdminComputingUnitResource._
+
+  /**
+    * Create a public computing unit: one every user may run on, which runs a single workflow at
+    * a time and queues the rest.
+    *
+    * Separate from /computing-unit/create rather than a flag on its params, so that the only
+    * route to `access_scope = public` is one a REGULAR user cannot call at all.
+    */
+  @POST
+  @Consumes(Array(MediaType.APPLICATION_JSON))
+  @Path("/public")
+  def createPublicComputingUnit(
+      param: WorkflowComputingUnitCreationParams,
+      @Auth user: SessionUser
+  ): DashboardWorkflowComputingUnit = {
+    if (!ComputingUnitConfig.publicComputingUnitEnabled) {
+      throw new ForbiddenException("Public computing units are disabled in this deployment.")
+    }
+    new ComputingUnitManagingResource()
+      .createComputingUnit(param, user, ComputingUnitAccessScopeEnum.PUBLIC)
+  }
 
   /**
     * List every non-terminated computing unit across all users (ADMIN-only).

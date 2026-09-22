@@ -21,13 +21,17 @@ import { ApplicationRef, DebugElement, getDebugNode, SimpleChange } from "@angul
 import { NgModel } from "@angular/forms";
 import { CdkVirtualScrollViewport } from "@angular/cdk/scrolling";
 import { ComponentFixture, TestBed } from "@angular/core/testing";
+import { CuImage, CuImageService } from "../../../dashboard/service/admin/cu-image/cu-image.service";
 import { HttpClientTestingModule } from "@angular/common/http/testing";
 import { NzModalService } from "ng-zorro-antd/modal";
 import { NoopAnimationsModule } from "@angular/platform-browser/animations";
 import { of, throwError } from "rxjs";
+import { HttpErrorResponse } from "@angular/common/http";
 import type { Mocked } from "vitest";
 import { ComputingUnitCreateModalComponent } from "./computing-unit-create-modal.component";
 import { WorkflowComputingUnitManagingService } from "../../service/computing-unit/workflow-computing-unit/workflow-computing-unit-managing.service";
+import { UserService } from "../../service/user/user.service";
+import { StubUserService } from "../../service/user/stub-user.service";
 import { ComputingUnitStatusService } from "../../service/computing-unit/computing-unit-status/computing-unit-status.service";
 import { MockComputingUnitStatusService } from "../../service/computing-unit/computing-unit-status/mock-computing-unit-status.service";
 import { NotificationService } from "../../service/notification/notification.service";
@@ -38,12 +42,29 @@ import { buildLocalComputingUnitUri, getJvmMemorySliderConfig } from "../../util
 describe("ComputingUnitCreateModalComponent", () => {
   let component: ComputingUnitCreateModalComponent;
   let fixture: ComponentFixture<ComputingUnitCreateModalComponent>;
+  const curatedImage = (over: Partial<CuImage> = {}): CuImage => ({
+    iid: 1,
+    name: "Python ML",
+    sourceRef: "owner/name:1",
+    sourceDigest: "sha256:abc",
+    status: "READY",
+    imageTag: "owner/name@sha256:abc",
+    attempt: 1,
+    creationTime: 0,
+    updateTime: 0,
+    ...over,
+  });
+  const mockCuImageService = { list: vi.fn() };
   let mockComputingUnitService: Mocked<WorkflowComputingUnitManagingService>;
   let mockNotificationService: Mocked<NotificationService>;
 
   const createdUnit = { computingUnit: { cuid: 42 } } as unknown as DashboardWorkflowComputingUnit;
 
   beforeEach(async () => {
+    // No curated images by default, so the existing tests see today's behaviour. Cleared
+    // as well as stubbed: the mock is shared, so call counts would carry between tests.
+    mockCuImageService.list.mockClear();
+    mockCuImageService.list.mockReturnValue(of([]));
     mockComputingUnitService = {
       getComputingUnitTypes: vi.fn(),
       getComputingUnitLimitOptions: vi.fn(),
@@ -65,6 +86,7 @@ describe("ComputingUnitCreateModalComponent", () => {
 
     await TestBed.configureTestingModule({
       providers: [
+        { provide: CuImageService, useValue: mockCuImageService },
         // The real NzModalService is required here: the declarative <nz-modal>
         // in this component's template delegates opening to NzModalService.create(),
         // so a stub breaks every test that renders the modal open.
@@ -72,6 +94,8 @@ describe("ComputingUnitCreateModalComponent", () => {
         { provide: WorkflowComputingUnitManagingService, useValue: mockComputingUnitService },
         { provide: NotificationService, useValue: mockNotificationService },
         { provide: ComputingUnitStatusService, useClass: MockComputingUnitStatusService },
+        // The modal asks who the user is to decide whether to offer the public-unit option.
+        { provide: UserService, useClass: StubUserService },
         ...commonTestProviders,
       ],
       imports: [ComputingUnitCreateModalComponent, HttpClientTestingModule, NoopAnimationsModule],
@@ -79,6 +103,89 @@ describe("ComputingUnitCreateModalComponent", () => {
 
     fixture = TestBed.createComponent(ComputingUnitCreateModalComponent);
     component = fixture.componentInstance;
+  });
+
+  /** Both hosts render this modal always, so the list is read when it opens, not on init. */
+  const openDialog = () => {
+    fixture.detectChanges();
+    component.visible = true;
+    component.ngOnChanges({ visible: { currentValue: true } as never });
+    fixture.detectChanges();
+  };
+
+  it("offers only ready images, and none when there are none", () => {
+    mockCuImageService.list.mockReturnValue(
+      of([curatedImage({ iid: 1 }), curatedImage({ iid: 2, name: "Still checking", status: "VALIDATING" })])
+    );
+    openDialog();
+    // A unit cannot start from an image that has not passed its check.
+    expect(component.curatedImages.map(i => i.iid)).toEqual([1]);
+    // Nothing is preselected: the default is the deployment's own image.
+    expect(component.selectedImageId).toBe(component.DEPLOYMENT_IMAGE);
+  });
+
+  // A 503 means the feature is off and is expected; anything else means the picker
+  // vanished for a reason the user should hear about.
+  it("says so when the images cannot be loaded for a real reason", () => {
+    mockCuImageService.list.mockReturnValue(
+      throwError(() => new HttpErrorResponse({ status: 500, statusText: "Server Error" }))
+    );
+    openDialog();
+    expect(component.curatedImages).toEqual([]);
+    expect(mockNotificationService.error).toHaveBeenCalled();
+  });
+
+  it("shows no images when the deployment has the feature switched off", () => {
+    // The API answers 503 there. The dropdown is hidden and nothing else changes.
+    mockCuImageService.list.mockReturnValue(
+      throwError(() => new HttpErrorResponse({ status: 503, statusText: "Service Unavailable" }))
+    );
+    openDialog();
+    expect(component.curatedImages).toEqual([]);
+    // Expected on such a deployment, so it is not reported.
+    expect(mockNotificationService.error).not.toHaveBeenCalled();
+  });
+
+  it("sends the chosen image, and forgets it when the modal reopens", () => {
+    mockCuImageService.list.mockReturnValue(of([curatedImage({ iid: 7 })]));
+    mockComputingUnitService.getComputingUnitTypes.mockReturnValue(
+      of({ typeOptions: ["kubernetes"] as WorkflowComputingUnitType[] })
+    );
+    mockComputingUnitService.createKubernetesBasedComputingUnit.mockReturnValue(of(createdUnit));
+    openDialog();
+
+    component.newComputingUnitName = "On a curated image";
+    component.selectedImageId = 7;
+    component.startComputingUnit();
+    expect(mockComputingUnitService.createKubernetesBasedComputingUnit).toHaveBeenCalledWith(
+      "On a curated image",
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      7,
+      // Private: StubUserService's user is not an admin, so the option is never offered.
+      false
+    );
+
+    // The image is chosen per unit, so the next one must not inherit it.
+    component.visible = true;
+    component.ngOnChanges({ visible: { currentValue: true } as never });
+    expect(component.selectedImageId).toBe(component.DEPLOYMENT_IMAGE);
+  });
+
+  // The regression this guards: read in ngOnInit, which runs at page load because neither
+  // host wraps this modal in an *ngIf, an image that became ready since then never showed.
+  it("re-reads the images each time the dialog opens", () => {
+    mockCuImageService.list.mockReturnValue(of([]));
+    fixture.detectChanges();
+    expect(mockCuImageService.list).not.toHaveBeenCalled();
+
+    mockCuImageService.list.mockReturnValue(of([curatedImage({ iid: 9, name: "Ready later" })]));
+    component.visible = true;
+    component.ngOnChanges({ visible: { currentValue: true } as never });
+    expect(component.curatedImages.map(i => i.iid)).toEqual([9]);
   });
 
   it("should create", () => {
@@ -180,7 +287,10 @@ describe("ComputingUnitCreateModalComponent", () => {
       "4Gi",
       "0",
       "2G",
-      "128Mi"
+      "128Mi",
+      // No curated image chosen, so the unit runs the deployment's own.
+      undefined,
+      false
     );
     expect(mockNotificationService.success).toHaveBeenCalledWith("Successfully created the new compute unit");
     expect(unitCreatedSpy).toHaveBeenCalledWith(createdUnit);

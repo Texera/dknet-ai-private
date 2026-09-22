@@ -51,7 +51,15 @@ export const resolved = (id: string, displayName: string, extra: Partial<Resolve
  * constructor takes.
  */
 export function setupHarness() {
-  const router = { navigate: vi.fn() };
+  // `getCurrentNavigation` answers what the page is being destroyed for: null stands for no
+  // navigation in flight, which is the browser unloading. `serializeUrl` is the real router's,
+  // turning a UrlTree back into a path; here the tests hand in the path itself.
+  const router = {
+    navigate: vi.fn(),
+    navigateByUrl: vi.fn(),
+    getCurrentNavigation: vi.fn().mockReturnValue(null),
+    serializeUrl: (url: unknown) => String(url),
+  };
   const workflowChangedStream = new Subject<unknown>();
   // Announces every form-config write (see formBindingChanged$ and the form-binding mock below).
   const formBindingChanged = new Subject<unknown>();
@@ -130,7 +138,11 @@ export function setupHarness() {
     workflowChanged: () => workflowChangedStream.asObservable(),
     workflowMetaDataChanged: () => workflowMetaDataChangedStream.asObservable(),
     getWorkflow: vi.fn().mockReturnValue({ wid: 7, content: { operators: [], operatorPositions: {} } }),
-    getWorkflowMetadata: () => ({ name: "scGPT", lastModifiedTime: 1767225600000 }),
+    // Carries the wid, as the real metadata does once a workflow is open: it is what tells the
+    // page, on the way out, whether the navigation is leaving this workflow or handing it over.
+    getWorkflowMetadata: () => ({ wid: 7, name: "scGPT", lastModifiedTime: 1767225600000 }),
+    // Off by default: most specs open a workflow that is not already live, and so load it.
+    hasWorkflowOpen: vi.fn().mockReturnValue(false),
     setWorkflowName: vi.fn(),
     setWorkflowMetadata: vi.fn(),
     setHighlightingEnabled: vi.fn(),
@@ -308,7 +320,14 @@ export function setupHarness() {
   // default so a rebuild is never suppressed, and overridden by the tests that probe typing.
   const host = { nativeElement: { querySelector: () => null, contains: () => false } };
   const datePipe = { transform: () => "01/01/2026 00:00:00" };
-  const config = { env: { formViewEnabled: true } };
+  const config = { env: { formViewEnabled: true, warehouseEnabled: false } };
+  // The run button asks the same pair ExecuteWorkflowService refuses on: the flag above and the
+  // pick below.
+  let selectedWarehouseId: number | undefined = undefined;
+  const warehouseService = {
+    getSelectedWarehouseIdValue: () => selectedWarehouseId,
+    selectWarehouse: (whid: number | undefined) => (selectedWarehouseId = whid),
+  };
 
   // Point the persist mock at `workflow`; each spec supplies the remaining constructor
   // arguments in its own order via the named mocks above.
@@ -343,6 +362,7 @@ export function setupHarness() {
     host,
     datePipe,
     config,
+    warehouseService,
     workflowChangedStream,
     formBindingChanged,
     workflowMetaDataChangedStream,

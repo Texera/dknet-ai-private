@@ -64,6 +64,7 @@ object EnvironmentalVariable {
     */
   val ENV_CU_ID = "TEXERA_CU_ID"
   val ENV_MOUNT_IN_POD_ROOT = "TEXERA_MOUNT_IN_POD_ROOT"
+  val ENV_ACCESS_CONTROL_SERVICE_URL = "ACCESS_CONTROL_SERVICE_URL"
 
   // JDBC
   val ENV_JDBC_URL = "STORAGE_JDBC_URL"
@@ -163,6 +164,11 @@ object EnvironmentalVariable {
     "WEB_SERVER_CLEAN_ALL_EXECUTION_RESULTS_ON_SERVER_START"
   val ENV_MAX_WORKFLOW_WEBSOCKET_REQUEST_PAYLOAD_SIZE_KB =
     "MAX_WORKFLOW_WEBSOCKET_REQUEST_PAYLOAD_SIZE_KB"
+
+  // Public computing units. A unit only queues if it knows the feature is on, so these have to
+  // reach the unit's own pod, not just the services that create it.
+  val ENV_COMPUTING_UNIT_PUBLIC_ENABLED = "COMPUTING_UNIT_PUBLIC_ENABLED"
+  val ENV_COMPUTING_UNIT_PUBLIC_MAX_RUN_SECONDS = "COMPUTING_UNIT_PUBLIC_MAX_RUN_SECONDS"
 
   // Fault Tolerance
   val ENV_FAULT_TOLERANCE_LOG_STORAGE_URI = "FAULT_TOLERANCE_LOG_STORAGE_URI"

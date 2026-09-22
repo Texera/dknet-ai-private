@@ -35,7 +35,7 @@ import { asapScheduler, EMPTY, forkJoin, merge, Observable, Subject, timer } fro
 import { catchError, concatMap, debounceTime, finalize, observeOn, switchMap, takeUntil, tap } from "rxjs/operators";
 
 import { CdkDragDrop, DragDropModule } from "@angular/cdk/drag-drop";
-import { USER_WORKFLOW, USER_WORKSPACE } from "../../../app-routing.constant";
+import { isLeavingWorkspace, USER_WORKFLOW, workspaceCanvasUrl } from "../../../app-routing.constant";
 import { EditableLabelWrapperComponent } from "../../../common/formly/editable-label-wrapper/editable-label-wrapper.component";
 import { FormFieldBinding, Workflow, WorkflowContent } from "../../../common/type/workflow";
 import { ComputingUnitStatusService } from "../../../common/service/computing-unit/computing-unit-status/computing-unit-status.service";
@@ -53,6 +53,7 @@ import { FormBindingService, ResolvedField } from "../../service/form-binding/fo
 import { WorkflowActionService } from "../../service/workflow-graph/model/workflow-action.service";
 import { ValidationWorkflowService } from "../../service/validation/validation-workflow.service";
 import { GuiConfigService } from "../../../common/service/gui-config.service";
+import { WarehouseService } from "../../../common/service/warehouse/warehouse.service";
 import { WorkflowConsoleService } from "../../service/workflow-console/workflow-console.service";
 import { WorkflowResultService } from "../../service/workflow-result/workflow-result.service";
 import { PanelResizeService } from "../../service/workflow-result/panel-resize/panel-resize.service";
@@ -190,6 +191,9 @@ export class WorkflowFormComponent implements OnInit, OnDestroy {
    */
   public executionDuration = 0;
   public executionState: ExecutionState = ExecutionState.Uninitialized;
+  // Place in a public computing unit's queue, shown on the run button while waiting.
+  public queuePosition = 0;
+  public queueLength = 0;
   public runError = "";
   /** The picked unit's connection state, mirrored from the same stream the operator canvas reads,
    *  so "Connecting" here means exactly what it means there. */
@@ -299,7 +303,8 @@ export class WorkflowFormComponent implements OnInit, OnDestroy {
     // Same source the operator canvas reads its "Invalid" / "Empty" states from, so Run is
     // disabled here exactly when it is disabled there.
     private validationWorkflowService: ValidationWorkflowService,
-    private config: GuiConfigService
+    private config: GuiConfigService,
+    private warehouseService: WarehouseService
   ) {}
 
   ngOnInit(): void {
@@ -449,6 +454,10 @@ export class WorkflowFormComponent implements OnInit, OnDestroy {
       .subscribe(({ current }) => {
         const wasRunning = this.isRunning;
         this.executionState = current.state;
+        if (current.state === ExecutionState.Queued) {
+          this.queuePosition = current.position;
+          this.queueLength = current.queueLength;
+        }
         // Reconcile the lock with the new state. The execute service flips the lock BEFORE it emits
         // the state (updateWorkflowActionLock runs first in updateExecutionState), so when a run ends
         // the clamp below still saw "running" and locked the graph again; this is where edit mode
@@ -564,7 +573,18 @@ export class WorkflowFormComponent implements OnInit, OnDestroy {
     // without loading anything, so a request that then fails cannot strand the visitor on
     // an error instead of the page they would have gotten.
     if (!this.config.env.formViewEnabled) {
-      void this.router.navigate([USER_WORKSPACE, String(wid)], { replaceUrl: true });
+      void this.router.navigateByUrl(workspaceCanvasUrl(wid), { replaceUrl: true });
+      return;
+    }
+    // Arriving from the operator canvas of this same workflow, which kept its session for us.
+    // The graph is already here and already in its co-editing room, so there is nothing to fetch
+    // and nothing to rebuild: take the name and access from what is open and settle in.
+    if (this.workflowActionService.hasWorkflowOpen(wid)) {
+      const metadata = this.workflowActionService.getWorkflowMetadata();
+      this.workflowName = metadata.name;
+      this.storedPositions = { ...(this.workflowActionService.getWorkflow().content?.operatorPositions ?? {}) };
+      this.canEdit = !metadata.readonly;
+      this.settleIntoForm();
       return;
     }
     this.workflowActionService.resetAsNewWorkflow();
@@ -585,18 +605,7 @@ export class WorkflowFormComponent implements OnInit, OnDestroy {
           this.canEdit = !workflow.readonly;
           this.workflowActionService.setNewSharedModel(wid, this.userService.getCurrentUser());
           this.workflowActionService.reloadWorkflow(workflow);
-          // The workflow is shown, not edited, from here: dragging operators around or
-          // deleting them belongs to the operator canvas. Lock now, and keep it locked against
-          // anything else that unlocks the graph (clampEditability).
-          this.applyEditability();
-          this.clampEditability();
-          this.refreshSavedState();
-          this.later(() => this.adjustWorkflowNameWidth(), 0);
-          this.readConfig();
-          this.registerMetadataRefresh();
-          this.registerAutoPersist();
-          this.loading = false;
-          this.cdr.detectChanges();
+          this.settleIntoForm();
         },
         // The load can fail for many reasons (no access, a network or server error, the
         // metadata call): a neutral message covers them without claiming it was permissions.
@@ -605,6 +614,23 @@ export class WorkflowFormComponent implements OnInit, OnDestroy {
           void this.router.navigate([USER_WORKFLOW]);
         },
       });
+  }
+
+  /** What the page does once the workflow is in front of it, whichever way it got there. */
+  private settleIntoForm(): void {
+    // The workflow is shown, not edited, from here: dragging operators around or deleting them
+    // belongs to the operator canvas. Lock now, and keep it locked against anything else that
+    // unlocks the graph (clampEditability). The clamp is dropped when this page is destroyed;
+    // the lock itself is the canvas's to lift when it takes the session back.
+    this.applyEditability();
+    this.clampEditability();
+    this.refreshSavedState();
+    this.later(() => this.adjustWorkflowNameWidth(), 0);
+    this.readConfig();
+    this.registerMetadataRefresh();
+    this.registerAutoPersist();
+    this.loading = false;
+    this.cdr.detectChanges();
   }
 
   /**
@@ -1520,10 +1546,26 @@ export class WorkflowFormComponent implements OnInit, OnDestroy {
    * "Connecting" and disables its run button. Read from the exact condition the canvas uses
    * (menu.component's getRunButtonBehavior), so the two stay in step.
    */
+  /** What the note under the run button should say while something is in flight. */
+  public get runNote(): string {
+    if (this.executionState === ExecutionState.Queued) {
+      return this.queueLength > 1
+        ? `Waiting for the computing unit -- ${this.queuePosition} of ${this.queueLength} in the queue. It starts on its own.`
+        : "Waiting for the computing unit -- it runs one workflow at a time. Yours starts on its own.";
+    }
+    return "Running -- this keeps going if you look away.";
+  }
+
   public get isConnecting(): boolean {
     return (
       this.computingUnitStatus !== ComputingUnitState.NoComputingUnit && !this.workflowWebsocketService.isConnected
     );
+  }
+
+  /** The exact condition ExecuteWorkflowService refuses a run on, so the button can say it first
+   *  instead of starting nothing and explaining in a toast. */
+  public get hasNoWarehouse(): boolean {
+    return this.config.env.warehouseEnabled && this.warehouseService.getSelectedWarehouseIdValue() === undefined;
   }
 
   /** No unit chosen yet: the button shows a disabled "Connect" hint and the unit is picked in the
@@ -1554,6 +1596,16 @@ export class WorkflowFormComponent implements OnInit, OnDestroy {
     if (this.isConnecting) {
       return { label: "Connecting", icon: "loading", disabled: true };
     }
+    // Before the Stop branch: a queued run is in flight as far as isRunning is concerned, which
+    // is what makes this button cancel it, but labelling it "Stop" would hide that the run has
+    // not started and give no sense of the wait.
+    if (this.executionState === ExecutionState.Queued) {
+      return {
+        label: this.queueLength > 0 ? `Queued ${this.queuePosition}/${this.queueLength}` : "Queued",
+        icon: "clock-circle",
+        disabled: false,
+      };
+    }
     if (this.isRunning) {
       return { label: "Stop", icon: "stop", disabled: false };
     }
@@ -1565,6 +1617,10 @@ export class WorkflowFormComponent implements OnInit, OnDestroy {
     }
     if (this.hasNoComputingUnit) {
       return { label: "Connect", icon: "plus-circle", disabled: true };
+    }
+    // After the unit, as the canvas orders them: somewhere to compute before somewhere to write.
+    if (this.hasNoWarehouse) {
+      return { label: "Warehouse", icon: "plus-circle", disabled: true };
     }
     // A unit is chosen and connected, but shared to this reader read-only: the canvas gates
     // execution on write access to the unit, so the form disables Run rather than sending a request
@@ -1773,31 +1829,32 @@ export class WorkflowFormComponent implements OnInit, OnDestroy {
       });
   }
 
-  /**
-   * Switch to the operator canvas with a full page load, not a route. The two views share
-   * root-level singletons (the graph, the Yjs shared model, the CU connection); handing
-   * over in-process left the old state attached -- undraggable operators, a ghost coeditor
-   * of yourself, broken runs. A fresh document is the reliable handover.
-   */
+  /** Switch to the operator canvas. */
   public openRegularCanvas(): void {
-    // Save first and hand over only once the save has completed: the full-page load unloads this
-    // document, and a request still in flight at that moment is aborted, so navigating right after
-    // firing the save could lose the very edit the switch is meant to carry across. A save that
-    // fails keeps the author here with the error shown, rather than leaving with changes that were
-    // never stored. A reader, who has nothing to save, goes straight over.
+    // Save first and hand over only once the save has completed, so an edit made here cannot be
+    // left behind by the view that replaces this one. A save that fails keeps the author here
+    // with the error shown, rather than leaving with changes that were never stored. A reader,
+    // who has nothing to save, goes straight over.
     this.save(() => this.openCanvasPage());
   }
 
   /**
-   * The full-page handover to the operator canvas, apart from the save so the order is testable.
-   * Excluded from coverage as a whole: jsdom cannot navigate, so the specs stub this method and
-   * assert when it is called rather than what it does.
+   * The hand-over to the operator canvas, apart from the save so the order is testable.
+   *
+   * A route, not a page load: the two views are views of one open workflow, and reloading threw
+   * away everything that made the workflow live -- the shared document, the computing unit
+   * connection, the execution state -- only to rebuild it on the other side. This page keeps the
+   * session on its way out (see ngOnDestroy) and the canvas attaches to it.
    */
-  /* v8 ignore start */
   private openCanvasPage(): void {
-    window.location.href = `${USER_WORKSPACE}/${this.wid}`;
+    // Reachable without an id: save() runs its callback even for a workflow it declined to save,
+    // and this page keeps none when the route carried no usable one (ngOnInit redirects instead).
+    // There is no canvas to go to then, and "/user/workflow/undefined" is not a place.
+    if (this.wid === undefined) {
+      return;
+    }
+    void this.router.navigateByUrl(workspaceCanvasUrl(this.wid));
   }
-  /* v8 ignore stop */
 
   /**
    * Save the same way the operator canvas does. Both views edit one workflow, so the
@@ -1915,13 +1972,10 @@ export class WorkflowFormComponent implements OnInit, OnDestroy {
           if (this.destroyed) {
             return;
           }
-          // The response reflects the snapshot that was sent. A rename made since must not be undone
-          // by it (its own save is already queued behind this one); what this feedback is for is the
-          // server-owned part, the timestamp above all, and the normalised name when nothing changed.
-          const current = this.workflowActionService.getWorkflowMetadata();
-          this.workflowActionService.setWorkflowMetadata(
-            current.name !== preserved.name ? { ...updatedWorkflow, name: current.name } : updatedWorkflow
-          );
+          // Fed back as it arrives: WorkflowPersistService already relays every response with the
+          // page's current name and description, so an edit made while this save was out is not
+          // undone here. What is left to apply is the server-owned part, the timestamp above all.
+          this.workflowActionService.setWorkflowMetadata(updatedWorkflow);
         },
         // A save that fails silently is the worst thing this page can do: the author walks
         // away believing the form they just built is stored.
@@ -1976,10 +2030,14 @@ export class WorkflowFormComponent implements OnInit, OnDestroy {
     // drain (not tied to this component) sends what is left in order and ends by itself.
     this.save();
     this.persistQueue.complete();
-    this.workflowActionService.clearWorkflow();
-    this.computingUnitStatusService.disconnect();
-    this.executeWorkflowService.resetExecutionAndWorkers();
-    this.workflowConsoleService.clearConsoleMessages();
-    this.workflowResultService.clearResults();
+    // Kept when this workflow's own operator canvas is taking over: that is a hand-over, not a
+    // departure, and rebuilding all of it on the other side is the cost this avoids.
+    if (isLeavingWorkspace(this.router, this.workflowActionService.getWorkflowMetadata().wid)) {
+      this.workflowActionService.clearWorkflow();
+      this.computingUnitStatusService.disconnect();
+      this.executeWorkflowService.resetExecutionAndWorkers();
+      this.workflowConsoleService.clearConsoleMessages();
+      this.workflowResultService.clearResults();
+    }
   }
 }
