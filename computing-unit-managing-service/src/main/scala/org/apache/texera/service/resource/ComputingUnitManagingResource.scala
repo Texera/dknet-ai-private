@@ -27,6 +27,7 @@ import jakarta.ws.rs._
 import jakarta.ws.rs.core.{MediaType, Response}
 import org.apache.commons.lang3.StringUtils
 import org.apache.texera.auth.JwtAuth.jwtClaims
+import org.apache.texera.auth.util.ComputingUnitAccess
 import org.apache.texera.auth.{JwtAuth, SessionUser}
 import org.apache.texera.common.config.KubernetesConfig.{
   cpuLimitOptions,
@@ -686,22 +687,12 @@ class ComputingUnitManagingResource {
       status = ComputingUnitHelpers.getComputingUnitStatus(unit).toString,
       metrics = ComputingUnitHelpers.getComputingUnitMetrics(unit),
       isOwner = unit.getUid.equals(user.getUid),
-      accessPrivilege = {
-        val cuAccessDao = new ComputingUnitUserAccessDao(context.configuration())
-        val access = cuAccessDao
-          .fetchByUid(user.getUid)
-          .asScala
-          .find(access => access.getCuid.equals(cuid))
-
-        if (access.isDefined) {
-          access.get.getPrivilege
-        } else if (unit.getUid.equals(user.getUid)) {
-          PrivilegeEnum.WRITE
-        } else {
-          // Default privilege for non-owners without explicit access
-          PrivilegeEnum.NONE
-        }
-      },
+      // Asked of ComputingUnitAccess rather than worked out again here. This endpoint is polled
+      // every couple of seconds for the selected unit while /list refreshes on the same timer, so
+      // any disagreement between the two shows up as a run button flickering between its states
+      // and settling on whichever replied last. A second copy of the rules had already drifted:
+      // it answered NONE for a public unit, which every user may in fact run on.
+      accessPrivilege = ComputingUnitAccess.getComputingUnitAccess(cuid, user.getUid),
       ownerAvatar,
       ownerUsername
     )

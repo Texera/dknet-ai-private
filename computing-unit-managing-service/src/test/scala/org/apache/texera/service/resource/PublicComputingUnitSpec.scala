@@ -194,6 +194,28 @@ class PublicComputingUnitSpec
     resource.listComputingUnits(session(regularUid, UserRoleEnum.REGULAR)) shouldBe empty
   }
 
+  // /list and /{cuid} are polled on the same timer while a unit is selected, so a disagreement
+  // between them shows up as a run button flickering between "Run" and "No access".
+  "getComputingUnitInfo" should "agree with the listing about a public unit's privilege" in {
+    insertUnit(107, adminUid, "shared unit", ComputingUnitAccessScopeEnum.PUBLIC)
+
+    val listed = resource.listComputingUnits(session(regularUid, UserRoleEnum.REGULAR)).head
+    val fetched = resource.getComputingUnitInfo(107, session(regularUid, UserRoleEnum.REGULAR))
+
+    fetched.accessPrivilege shouldBe listed.accessPrivilege
+    fetched.accessPrivilege shouldBe
+      org.apache.texera.dao.jooq.generated.enums.PrivilegeEnum.WRITE
+    fetched.isOwner shouldBe false
+  }
+
+  it should "still report NONE on another user's private unit" in {
+    insertUnit(108, adminUid, "admin's own unit", ComputingUnitAccessScopeEnum.PRIVATE)
+
+    resource
+      .getComputingUnitInfo(108, session(regularUid, UserRoleEnum.REGULAR))
+      .accessPrivilege shouldBe org.apache.texera.dao.jooq.generated.enums.PrivilegeEnum.NONE
+  }
+
   "a public unit" should "refuse termination by a regular user" in {
     insertUnit(104, adminUid, "shared unit", ComputingUnitAccessScopeEnum.PUBLIC)
 
