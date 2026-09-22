@@ -246,6 +246,7 @@ class WorkflowExecutionServiceSpec
       null,
       new WorkflowContext(),
       null,
+      null,
       request,
       store,
       errorHandler,

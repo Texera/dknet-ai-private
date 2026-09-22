@@ -36,6 +36,7 @@ import org.apache.texera.amber.engine.architecture.scheduling.RegionExecutionMan
 import org.apache.texera.amber.engine.common.AmberRuntime
 import org.scalatest.BeforeAndAfterAll
 import org.scalatest.flatspec.AnyFlatSpecLike
+import org.apache.texera.amber.core.workflow.WorkflowContext.DEFAULT_EXECUTION_ID
 
 class WorkflowExecutionManagerSpec
     extends TestKit(ActorSystem("WorkflowExecutionManagerSpec", AmberRuntime.pekkoConfig))
@@ -74,7 +75,7 @@ class WorkflowExecutionManagerSpec
   }
 
   private def newJumpManager(schedule: Schedule): WorkflowExecutionManager = {
-    val manager = new WorkflowExecutionManager(WorkflowExecution(), null, null)
+    val manager = new WorkflowExecutionManager(WorkflowExecution(), null, null, DEFAULT_EXECUTION_ID)
     manager.schedule = schedule
     manager
   }
@@ -127,7 +128,8 @@ class WorkflowExecutionManagerSpec
     val workflowManager = new WorkflowExecutionManager(
       workflowExecution,
       CoordinatorConfig(None, None, None, None),
-      rpcProbe.asyncRPCClient
+      rpcProbe.asyncRPCClient,
+      DEFAULT_EXECUTION_ID
     )
     workflowManager.schedule = Schedule(Map(0 -> Set(firstRegion), 1 -> Set(secondRegion)))
     workflowManager.setupActorRefService(coordinator.actorRefService)

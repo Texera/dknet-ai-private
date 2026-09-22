@@ -17,16 +17,16 @@
  * under the License.
  */
 
-package org.apache.amber.engine.architecture.scheduling
+package org.apache.texera.amber.engine.architecture.scheduling
 
-import org.apache.amber.core.workflow.{GlobalPortIdentity, PortIdentity, WorkflowContext}
-import org.apache.amber.core.workflow.cache.FingerprintUtil
-import org.apache.amber.engine.e2e.TestUtils.buildWorkflow
-import org.apache.amber.operator.TestOperators
-import org.apache.amber.operator.aggregate.{AggregateOpDesc, AggregationFunction}
-import org.apache.amber.operator.keywordSearch.KeywordSearchOpDesc
-import org.apache.amber.operator.source.scan.csv.CSVScanSourceOpDesc
-import org.apache.texera.workflow.LogicalLink
+import org.apache.texera.amber.core.workflow.{GlobalPortIdentity, PortIdentity, WorkflowContext}
+import org.apache.texera.amber.core.workflow.cache.FingerprintUtil
+import org.apache.texera.amber.engine.e2e.TestUtils.buildWorkflow
+import org.apache.texera.amber.operator.TestOperators
+import org.apache.texera.amber.operator.aggregate.{AggregateOpDesc, AggregationFunction}
+import org.apache.texera.amber.operator.keywordSearch.KeywordSearchOpDesc
+import org.apache.texera.amber.operator.source.scan.csv.CSVScanSourceOpDesc
+import org.apache.texera.common.compiler.model.LogicalLink
 import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should.Matchers
 

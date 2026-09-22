@@ -45,6 +45,7 @@ import org.apache.texera.amber.engine.architecture.scheduling.{
 }
 import org.apache.texera.amber.engine.common.FriesReconfigurationAlgorithm.FriesComponent
 import org.scalatest.flatspec.AnyFlatSpec
+import org.apache.texera.amber.core.workflow.WorkflowContext.DEFAULT_EXECUTION_ID
 
 class FriesReconfigurationAlgorithmSpec extends AnyFlatSpec {
 
@@ -91,7 +92,7 @@ class FriesReconfigurationAlgorithmSpec extends AnyFlatSpec {
   }
 
   private def managerWithRegions(regions: Region*): WorkflowExecutionManager =
-    new WorkflowExecutionManager(WorkflowExecution(), null, null) {
+    new WorkflowExecutionManager(WorkflowExecution(), null, null, DEFAULT_EXECUTION_ID) {
       override def getExecutingRegions: Set[Region] = regions.toSet
     }
 

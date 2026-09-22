@@ -320,6 +320,7 @@ class WorkflowWebsocketResourceSpec
       null,
       new WorkflowContext(),
       null,
+      null,
       executeRequest,
       new ExecutionStateStore(),
       (_: Throwable) => (),

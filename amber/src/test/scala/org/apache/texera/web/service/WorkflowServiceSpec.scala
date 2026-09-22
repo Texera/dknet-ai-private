@@ -455,6 +455,7 @@ class WorkflowServiceSpec
       null,
       new WorkflowContext(),
       null,
+      null,
       request,
       new ExecutionStateStore(),
       (_: Throwable) => (),

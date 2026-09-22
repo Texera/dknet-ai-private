@@ -345,6 +345,7 @@ class SyncExecutionResourceSpec
       null,
       new WorkflowContext(),
       null,
+      null,
       WorkflowExecuteRequest(
         executionName = "test",
         engineVersion = "test",

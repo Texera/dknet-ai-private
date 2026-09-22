@@ -57,6 +57,7 @@ import org.scalatest.BeforeAndAfterAll
 import org.scalatest.flatspec.AnyFlatSpecLike
 
 import scala.collection.mutable.ArrayBuffer
+import org.apache.texera.amber.core.workflow.WorkflowContext.DEFAULT_EXECUTION_ID
 
 /**
   * `coordinatorInitiateAdvanceRegionExecutions` is how the coordinator advances its region
@@ -101,7 +102,12 @@ class AdvanceRegionExecutionsHandlerSpec
   private class PendingAdvanceExecutionManager(
       workflowExecution: WorkflowExecution,
       asyncRPCClient: AsyncRPCClient
-  ) extends WorkflowExecutionManager(workflowExecution, coordinatorConfig, asyncRPCClient) {
+  ) extends WorkflowExecutionManager(
+        workflowExecution,
+        coordinatorConfig,
+        asyncRPCClient,
+        DEFAULT_EXECUTION_ID
+      ) {
     val advanceCalls: ArrayBuffer[PekkoActorService] = ArrayBuffer()
     private val advance: Promise[Unit] = Promise[Unit]()
 

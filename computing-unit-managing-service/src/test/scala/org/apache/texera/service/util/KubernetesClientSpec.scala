@@ -261,7 +261,7 @@ class KubernetesClientSpec extends AnyFlatSpec with Matchers {
     val k8s = new KubernetesClient(clientWithNamedPod(name, pod(4, "Running"))._1)
 
     val thrown = intercept[Exception] {
-      k8s.createPod(4, "1", "2Gi", "0", Map.empty)
+      k8s.createPod(4, 1, "1", "2Gi", "0", Map.empty)
     }
     thrown.getMessage should include("already exists")
   }
@@ -277,7 +277,7 @@ class KubernetesClientSpec extends AnyFlatSpec with Matchers {
     // create()'s return value is not asserted; the pod is inspected through the captor below.
     when(resource.create()).thenReturn(null)
 
-    new KubernetesClient(client).createPod(5, "2", "4Gi", "1", Map("UID" -> 9, "MODE" -> "batch"))
+    new KubernetesClient(client).createPod(5, 9, "2", "4Gi", "1", Map("UID" -> 9, "MODE" -> "batch"))
 
     verify(client).resource(captor.capture())
     val built = captor.getValue
@@ -313,7 +313,7 @@ class KubernetesClientSpec extends AnyFlatSpec with Matchers {
       testAccessControlServiceUrl,
       testPodMountRoot
     )
-      .createPod(5, "2", "4Gi", "1", Map("UID" -> 9, "MODE" -> "batch"))
+      .createPod(5, 9, "2", "4Gi", "1", Map("UID" -> 9, "MODE" -> "batch"))
 
     verify(client).resource(captor.capture())
     val built = captor.getValue
@@ -362,7 +362,7 @@ class KubernetesClientSpec extends AnyFlatSpec with Matchers {
       when(namespaceable.inNamespace(namespace)).thenReturn(resource)
       // create()'s return value is not asserted; the pod is inspected through the captor below.
       when(resource.create()).thenReturn(null)
-      new KubernetesClient(client).createPod(6, "1", "2Gi", "0", Map.empty, shm)
+      new KubernetesClient(client).createPod(6, 1, "1", "2Gi", "0", Map.empty, shm)
       verify(client).resource(captor.capture())
       captor.getValue
     }
