@@ -369,6 +369,63 @@ against the pre-merge baseline. It was fixed.
 
 ---
 
+## 7a. Published images — you do not need to build
+
+Every image this branch needs is already on Docker Hub under the **`texera`** org, tag
+**`dknet-alphafold3`**, built from commit `779ae467a` of this branch. Names follow the repo's own
+mapping in `.github/workflows/build-and-push-images.yml`.
+
+| Chart value | Image | Compressed |
+| --- | --- | --- |
+| `webserver.imageName` | `texera/texera-dashboard-service:dknet-alphafold3` | 0.77 GB |
+| `workflowComputingUnitPool.imageName` | `texera/texera-workflow-execution-coordinator:dknet-alphafold3` | 3.00 GB |
+| *(unused by the chart)* | `texera/texera-workflow-execution-runner:dknet-alphafold3` | 1.34 GB |
+| `workflowComputingUnitManager.imageName` | `texera/texera-workflow-computing-unit-managing-service:dknet-alphafold3` | 0.67 GB |
+| `workflowCompilingService.imageName` | `texera/texera-workflow-compiling-service:dknet-alphafold3` | 0.63 GB |
+| `fileService.imageName` | `texera/texera-file-service:dknet-alphafold3` | 0.40 GB |
+| `configService.imageName` | `texera/texera-config-service:dknet-alphafold3` | 0.38 GB |
+| `accessControlService.imageName` | `texera/texera-access-control-service:dknet-alphafold3` | 0.38 GB |
+| `agentService.imageName` | `texera/texera-agent-service:dknet-alphafold3` | 0.07 GB |
+| `notebookMigrationService.imageName` | `texera/texera-notebook-migration-service:dknet-alphafold3` | 0.20 GB |
+| `jupyterPool.imageName` | `texera/texera-jupyter:dknet-alphafold3` | 0.30 GB |
+| `mounter.imageName` | `texera/texera-mounter:dknet-alphafold3` | 0.07 GB |
+
+Because the chart composes refs as
+`{{ texera.imageRegistry }}/{{ <svc>.imageName }}:{{ texera.imageTag }}`, pointing a deployment at
+all of them is two values:
+
+```yaml
+texera:
+  imageRegistry: texera
+  imageTag: dknet-alphafold3
+```
+
+Two images the chart references are **not** published because this repository contains no
+dockerfile or source for them: `texera-example-data-loader` (`exampleDataLoader.enabled`) and
+`texera/chat-assistant-service` (`chatAssistantService.enabled`). Both are on by default in
+`values.yaml`; turn them off, or expect ImagePullBackOff. Note also that chat-assistant's companion
+Service template is an empty comment, so even a working image would leave the Deployment orphaned.
+
+### The AlphaFold 3 image
+
+```
+texera/texera-workflow-execution-coordinator:dknet-alphafold3-af3      4.17 GB
+```
+
+Deliberately the **same repository** as the engine image with a different tag, which gives you both
+ways of using it:
+
+- **Every unit runs it** — set `workflowComputingUnitPool.imageTag: dknet-alphafold3-af3` (§3.2).
+  The platform's own services stay on `dknet-alphafold3`.
+- **Per-unit choice** — register `texera/texera-workflow-execution-coordinator:dknet-alphafold3-af3`
+  on the Curated Images admin page. It satisfies the validation rules: non-root `USER texera`, and
+  a start command containing `computing-unit-master` (verified on the built image). Registration
+  pins it to its digest.
+
+It carries AlphaFold 3 built from source on Python 3.12 (installed alongside the system 3.10, with
+`UDF_PYTHON_PATH=/usr/bin/python3.12`), hmmer, and CPU jax. **No model parameters and no genetic
+databases** — so `msa_search.py` works and the two structure-prediction UDFs do not (§4.4).
+
 ## 8. Deployment checklist
 
 ```
