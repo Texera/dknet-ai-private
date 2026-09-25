@@ -75,8 +75,9 @@ export class ModelSelectionModalComponent implements OnInit {
   };
 
   ngOnInit(): void {
+    // Public models are readable by anyone, so they can be mounted just like owned ones.
     this.modelService
-      .retrieveAccessibleModels()
+      .retrieveAccessibleModels(true)
       .pipe(untilDestroyed(this))
       .subscribe(models => {
         this.models = models;

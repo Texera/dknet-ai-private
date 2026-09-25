@@ -113,6 +113,14 @@ describe("ModelService", () => {
     req.flush([]);
     expect(await pending).toEqual([]);
   });
+
+  it("asks for public models too when includePublic is set", async () => {
+    const pending = firstValueFrom(service.retrieveAccessibleModels(true));
+    const req = http.expectOne(`${API}/model/list?includePublic=true`);
+    expect(req.request.method).toBe("GET");
+    req.flush([]);
+    expect(await pending).toEqual([]);
+  });
   it("posts a create request under the model-shaped field names", () => {
     // The backend reads modelName/isModelPublic; the dataset spellings would be silently dropped.
     service.createModel(newModel({ isPublic: true, isDownloadable: true })).subscribe();

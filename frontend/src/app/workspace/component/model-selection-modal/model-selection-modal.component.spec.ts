@@ -99,6 +99,8 @@ describe("ModelSelectionModalComponent", () => {
 
   it("lists the models the caller can see, with nothing selected yet", () => {
     build();
+    // Public models are offered too: a UDF may mount any model it can read.
+    expect(modelService.retrieveAccessibleModels).toHaveBeenCalledWith(true);
     expect(component.models).toEqual([model]);
     expect(component.selectedPath).toBeUndefined();
     const button: HTMLButtonElement = fixture.nativeElement.querySelector("button[nz-button]");

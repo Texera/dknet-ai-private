@@ -515,4 +515,37 @@ class ModelResourceSpec
       .model
       .getMid shouldEqual othersPublic.model.getMid
   }
+
+  it should "include public models owned by another user when includePublic is set" in {
+    val othersPublic = modelResource.createModel(
+      ModelResource.CreateModelRequest(
+        modelName = "others-public-model-for-picker",
+        modelDescription = "d",
+        isModelPublic = true,
+        isModelDownloadable = true,
+        framework = "pytorch",
+        format = null
+      ),
+      sessionUser2
+    )
+    val othersPrivate = modelResource.createModel(
+      ModelResource.CreateModelRequest(
+        modelName = "others-private-model-for-picker",
+        modelDescription = "d",
+        isModelPublic = false,
+        isModelDownloadable = true,
+        framework = "pytorch",
+        format = null
+      ),
+      sessionUser2
+    )
+
+    // The UDF model picker offers public models to mount, as the dataset picker does.
+    val listed = modelResource.listModels(sessionUser, includePublic = true)
+    val entry = listed.find(_.model.getMid == othersPublic.model.getMid)
+    entry should not be empty
+    entry.get.isOwner shouldBe false
+    entry.get.accessPrivilege shouldEqual PrivilegeEnum.READ
+    listed.find(_.model.getMid == othersPrivate.model.getMid) shouldBe empty
+  }
 }

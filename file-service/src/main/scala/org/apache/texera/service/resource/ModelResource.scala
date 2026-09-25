@@ -488,11 +488,18 @@ class ModelResource extends LazyLogging {
     }
   }
 
+  /**
+    * Models the caller was granted, and with `includePublic` also every public model.
+    *
+    * Your Work lists granted models only; a picker choosing a model to read, such as a UDF's
+    * `Resource.MODEL` parameter, passes `includePublic=true`, as `/dataset/list` does always.
+    */
   @GET
   @RolesAllowed(Array("REGULAR", "ADMIN"))
   @Path("/list")
   def listModels(
-      @Auth user: SessionUser
+      @Auth user: SessionUser,
+      @QueryParam("includePublic") @DefaultValue("false") includePublic: Boolean = false
   ): List[DashboardModel] = {
     val uid = user.getUid
     withTransaction(context)(ctx => {
@@ -502,7 +509,7 @@ class ModelResource extends LazyLogging {
         uid,
         classOf[Model],
         (model: Model) => model.getMid,
-        includePublic = false
+        includePublic = includePublic
       )(
         fromGrant = (model, ownerEmail, privilege, isOwner) =>
           Some(

@@ -145,9 +145,11 @@ export class ModelService {
       );
   }
 
-  /** The models the caller owns or has been granted. */
-  public retrieveAccessibleModels(): Observable<DashboardModel[]> {
-    return this.http.get<DashboardModel[]>(`${AppSettings.getApiEndpoint()}/${MODEL_LIST_URL}`);
+  /** The models the caller owns or has been granted, plus every public model with `includePublic`. */
+  public retrieveAccessibleModels(includePublic: boolean = false): Observable<DashboardModel[]> {
+    return this.http.get<DashboardModel[]>(`${AppSettings.getApiEndpoint()}/${MODEL_LIST_URL}`, {
+      params: includePublic ? { includePublic: "true" } : {},
+    });
   }
 
   /** A model's versions, newest first; an anonymous caller gets the public-only endpoint. */
