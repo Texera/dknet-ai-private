@@ -42,8 +42,16 @@ spec:
             limits:
               cpu: {{ .Values.pythonLanguageServer.resources.limits.cpu | quote }}
               memory: {{ .Values.pythonLanguageServer.resources.limits.memory | quote }}
+      {{- /*
+        Only when one is configured. The chart never creates this Secret, so naming it
+        unconditionally makes the kubelet authenticate with credentials that may not exist or
+        may be stale -- and a failed authentication is a 401 even for an image anyone can pull
+        anonymously, which reads as the image being missing rather than the Secret being wrong.
+      */ -}}
+      {{- if .Values.pythonLanguageServer.imagePullSecret }}
       imagePullSecrets:
         - name: {{ .Values.pythonLanguageServer.imagePullSecret }}
+      {{- end }}
 ---
 apiVersion: v1
 kind: Service
