@@ -200,7 +200,13 @@ object DocumentFactory {
             storageKey
           )
           .getOrElse(
-            throw new IllegalArgumentException("No storage is found for the given URI")
+            // Naming the URI matters: this is what a reader sees when an execution's result
+            // table is missing or was left incomplete, and without it there is no way to tell
+            // which operator's storage it was.
+            throw new IllegalArgumentException(
+              s"No storage is found for the given URI: $uri " +
+                s"(warehouse=$warehouse, namespace=$namespace, table=$storageKey)"
+            )
           )
 
         val amberSchema = IcebergUtil.fromIcebergSchema(table.schema())

@@ -152,7 +152,13 @@ class DocumentFactory:
             )
 
             if table is None:
-                raise ValueError("No storage is found for the given URI")
+                # Naming the URI matters: this is what a reader sees when an execution's
+                # result table is missing or was left incomplete, and without the URI there
+                # is no way to tell which operator's storage it was.
+                raise ValueError(
+                    f"No storage is found for the given URI: {uri} "
+                    f"(warehouse={warehouse}, namespace={namespace}, table={storage_key})"
+                )
 
             amber_schema = Schema(table.schema().as_arrow())
 
