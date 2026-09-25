@@ -48,6 +48,8 @@ import org.scalatest.flatspec.AnyFlatSpecLike
 import org.scalatest.matchers.should.Matchers
 import org.scalatest.time.{Millis, Span}
 
+import org.apache.texera.amber.engine.architecture.rpc.controlreturns.WorkflowAggregatedState
+
 import java.time.Instant
 import java.util.concurrent.ExecutorService
 import scala.collection.mutable.ListBuffer
@@ -467,4 +469,39 @@ class ExecutionConsoleServiceSpec
       }
     }
   }
+
+  "an operator error" should "fail the execution rather than leaving it running" in {
+    // A Python operator's uncaught exception reaches the coordinator only as an ERROR console
+    // message: the worker reports it and pauses itself, and nothing resumes it. Before this,
+    // the execution stayed RUNNING for ever and the computing unit refused the next run.
+    withFixture { f =>
+      f.client.consoleCallback(message(title = "TypeError: bad", msgType = ConsoleMessageType.ERROR))
+
+      val metadata = f.stateStore.metadataStore.getState
+      metadata.state shouldBe WorkflowAggregatedState.FAILED
+      metadata.fatalErrors.map(_.message) should contain("TypeError: bad")
+      f.stateStore.statsStore.getState.endTimeStamp should be > 0L
+    }
+  }
+
+  it should "not leave the execution running for a message that is not an error" in {
+    withFixture { f =>
+      f.client.consoleCallback(message(title = "just printing", msgType = ConsoleMessageType.PRINT))
+
+      f.stateStore.metadataStore.getState.state should not be WorkflowAggregatedState.FAILED
+    }
+  }
+
+  it should "fail the execution once however many workers report" in {
+    // Workers running alongside the one that threw report their own errors as they unwind.
+    withFixture { f =>
+      f.client.consoleCallback(message(title = "first", msgType = ConsoleMessageType.ERROR))
+      f.client.consoleCallback(message(title = "second", msgType = ConsoleMessageType.ERROR))
+
+      val errors = f.stateStore.metadataStore.getState.fatalErrors
+      errors.size shouldBe 1
+      errors.head.message shouldBe "first"
+    }
+  }
+
 }

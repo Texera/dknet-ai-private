@@ -30,7 +30,10 @@ import org.apache.texera.amber.core.tuple.Tuple
 import org.apache.texera.amber.core.virtualidentity.{ActorVirtualIdentity, OperatorIdentity}
 import org.apache.texera.amber.core.workflow.WorkflowContext
 import org.apache.texera.amber.engine.architecture.coordinator.ExecutionStateUpdate
-import org.apache.texera.amber.engine.architecture.rpc.controlcommands.ConsoleMessageType.COMMAND
+import org.apache.texera.amber.engine.architecture.rpc.controlcommands.ConsoleMessageType.{
+  COMMAND,
+  ERROR
+}
 import org.apache.texera.amber.engine.architecture.rpc.controlcommands.{
   ConsoleMessage,
   ConsoleMessageType,
@@ -61,6 +64,11 @@ import org.apache.texera.web.model.websocket.response.python.PythonExpressionEva
 import org.apache.texera.web.resource.dashboard.user.workflow.WorkflowExecutionsResource
 import org.apache.texera.web.storage.ExecutionStateStore
 import org.apache.texera.web.{SubscriptionManager, WebsocketInput}
+
+import org.apache.texera.amber.core.workflowruntimestate.FatalErrorType.EXECUTION_FAILURE
+import org.apache.texera.amber.core.workflowruntimestate.WorkflowFatalError
+import org.apache.texera.amber.error.ErrorUtils.getOperatorFromActorIdOpt
+import org.apache.texera.web.storage.ExecutionStateStore.updateWorkflowState
 
 import java.time.Instant
 import java.util.concurrent.{ExecutorService, Executors}
@@ -188,6 +196,11 @@ class ExecutionConsoleService(
     })
   )
 
+  // An operator that threw is reported once: the first ERROR console message fails the
+  // execution, and the workers that were running alongside it report their own errors as
+  // they unwind. Those must not each re-run the transition.
+  private var executionFailedByConsoleError = false
+
   protected def registerCallbackOnPythonConsoleMessage(): Unit = {
     addSubscription(
       client
@@ -199,9 +212,50 @@ class ExecutionConsoleService(
               )
             addConsoleMessage(consoleStore, opId.logicalOpId.id, evt)
           }
+          if (evt.msgType == ERROR) {
+            failExecutionOnOperatorError(evt)
+          }
         })
     )
 
+  }
+
+  /** Fail the execution because an operator raised.
+    *
+    * A Python operator's uncaught exception reaches the coordinator only as this message: the
+    * worker reports it and then pauses itself (EXCEPTION_PAUSE), which no longer resumes --
+    * the RetryRequest handler below is empty. Without this the execution stayed RUNNING for
+    * ever, the computing unit went on believing the workflow was executing and refused the
+    * next run ("This workflow is already running on this computing unit"), and the only way
+    * out was to recreate the unit. A Scala operator's exception does not go this way; it
+    * arrives as a FatalError and ExecutionStatsService fails the execution there, which is
+    * the behaviour mirrored here.
+    */
+  private def failExecutionOnOperatorError(evt: ConsoleMessage): Unit = {
+    if (executionFailedByConsoleError) {
+      return
+    }
+    executionFailedByConsoleError = true
+    val (operatorId, workerId) = getOperatorFromActorIdOpt(
+      Some(ActorVirtualIdentity(evt.workerId))
+    )
+    logger.error(s"operator error in execution: ${evt.title}")
+    stateStore.statsStore.updateState(stats =>
+      stats.withEndTimeStamp(System.currentTimeMillis())
+    )
+    stateStore.metadataStore.updateState { metadataStore =>
+      updateWorkflowState(FAILED, metadataStore).addFatalErrors(
+        WorkflowFatalError(
+          EXECUTION_FAILURE,
+          Timestamp(Instant.now),
+          evt.title,
+          evt.message,
+          operatorId,
+          workerId
+        )
+      )
+    }
+    client.shutdown()
   }
 
   addSubscription(
