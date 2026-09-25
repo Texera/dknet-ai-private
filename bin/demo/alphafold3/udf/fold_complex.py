@@ -138,14 +138,56 @@ class ProcessTupleOperator(UDFOperatorV2):
         self.cpus = max(1, len(os.sched_getaffinity(0)))
         self.molecules = []
 
+    # What a row may be called, in the order tried. The first name is the documented one;
+    # the rest are what people actually write, so a near-miss file works instead of failing.
+    COLUMNS = {
+        "job_name": ("job_name", "job", "id", "name"),
+        "entity": ("entity", "label", "description", "molecule"),
+        "type": ("type", "molecule_type", "kind"),
+        "copies": ("copies", "count", "n"),
+        "sequence": ("sequence", "seq", "residues"),
+    }
+
+    def _field(self, tuple_, field):
+        """The value for `field` under any accepted column name, or None if there is none."""
+        for name in self.COLUMNS[field]:
+            try:
+                value = tuple_[name]
+            except (KeyError, IndexError):
+                continue
+            if value is not None:
+                return value
+        return None
+
     @overrides
     def process_tuple(self, tuple_: Tuple, port: int) -> Iterator[Optional[TupleLike]]:
+        # Without this a missing column surfaces as a bare KeyError from deep in the engine,
+        # naming one column and not what was expected. The schema is documented only in this
+        # file's header, and the Form View shows just a file picker, so the user has nowhere
+        # to discover it -- the error has to carry it.
+        values = {field: self._field(tuple_, field) for field in self.COLUMNS}
+        # copies is the one safe default: one of a molecule is the obvious reading.
+        if values["copies"] is None:
+            values["copies"] = 1
+        missing = [f for f, v in values.items() if v is None]
+        if missing:
+            try:
+                found = ", ".join(tuple_.get_field_names())
+            except Exception:  # noqa: BLE001 -- the error must not depend on this working
+                found = "unknown"
+            raise ValueError(
+                "This CSV does not have the columns AlphaFold needs.\n"
+                f"  missing: {', '.join(missing)}\n"
+                f"  found:   {found}\n"
+                "  expected one row per molecule with: job_name, entity, type, copies, sequence\n"
+                "  (copies defaults to 1; id/name, molecule_type and seq are also accepted)"
+            )
         self.molecules.append({
-            "job_name": str(tuple_["job_name"]),
-            "entity": str(tuple_["entity"]),
-            "type": str(tuple_["type"]).strip().lower(),
-            "copies": int(tuple_["copies"]),
-            "sequence": re.sub(r"\s+", "", str(tuple_["sequence"])),
+            "job_name": str(values["job_name"]),
+            "entity": str(values["entity"]),
+            "type": str(values["type"]).strip().lower(),
+            "copies": int(values["copies"]),
+            "sequence": re.sub(r"\s+", "", str(values["sequence"])),
         })
         yield from ()
 
@@ -287,6 +329,12 @@ class ProcessTupleOperator(UDFOperatorV2):
             swatch("#ffdb13", "Low (50-70)"),
             swatch("#ff7d45", "Very low (0-50)"),
         ])
+        # AlphaFold writes a confidence as JSON null where it is undefined rather than
+        # omitting the key -- see the defaults above, which seed these as None -- so
+        # dict.get's default never fires. ipTM is the one that bites: it scores inter-chain
+        # placement, so a single-chain job has none. Show that as "n/a" rather than 0.00,
+        # which would read as "no confidence" instead of "not applicable".
+        score = lambda v, places=2: "n/a" if v is None else f"{v:.{places}f}"
         return f"""<!doctype html>
 <html><head><meta charset="utf-8">
 <script src="https://cdn.jsdelivr.net/npm/3dmol@2.4.0/build/3Dmol-min.js"></script>
@@ -307,8 +355,8 @@ class ProcessTupleOperator(UDFOperatorV2):
 <div class="page">
   <div class="bar">
     <div class="name">{title}</div>
-    <div class="scores">ipTM = <b>{summary.get("iptm", 0):.2f}</b> &nbsp; pTM = <b>{summary.get("ptm", 0):.2f}</b>
-      &nbsp; ranking score = <b>{summary.get("ranking_score", 0):.2f}</b> &nbsp; mean pLDDT = <b>{mean_plddt:.1f}</b></div>
+    <div class="scores">ipTM = <b>{score(summary.get("iptm"))}</b> &nbsp; pTM = <b>{score(summary.get("ptm"))}</b>
+      &nbsp; ranking score = <b>{score(summary.get("ranking_score"))}</b> &nbsp; mean pLDDT = <b>{score(mean_plddt, 1)}</b></div>
     <div class="meta">{chains}</div>
     <div class="legend">{legend}</div>
   </div>

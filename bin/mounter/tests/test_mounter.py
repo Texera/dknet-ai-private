@@ -205,6 +205,33 @@ def test_do_mount_times_out_if_the_mount_never_appears(mounter, monkeypatch):
 
 # ─────────────────── clean_cu_dir() ───────────────────
 
+def test_clean_keeps_the_directory_of_a_unit_whose_pod_still_exists(mounter, cu_dir):
+    # A restarted or rescheduled unit keeps its cuid, so the DELETED event for the old pod
+    # can arrive after the replacement is already running and bind-mounted here. Removing
+    # the directory then leaves that pod's bind on a deleted inode, and every later mount is
+    # invisible inside it -- permanently, until the unit is recreated.
+    directory, target = cu_dir("7")
+    mounter.set_mounts(target)
+    mounter.pod_exists = True
+
+    assert mounter.clean_cu_dir("7") is False
+    assert os.path.isdir(directory)
+    assert mounter.runs == []  # nothing was even unmounted
+    assert any("a pod for this unit exists" in line for line in mounter.logs)
+
+
+def test_clean_keeps_the_directory_when_the_api_cannot_say(mounter, cu_dir):
+    # Fail safe: an orphan directory costs disk until the next resync, while reaping a live
+    # unit's directory breaks that unit for good. Only a definite "no pod" permits removal.
+    directory, target = cu_dir("7")
+    mounter.set_mounts(target)
+    mounter.pod_exists = None  # API server unreachable
+
+    assert mounter.clean_cu_dir("7") is False
+    assert os.path.isdir(directory)
+    assert mounter.runs == []
+
+
 def test_clean_unmounts_then_removes_the_directory(mounter, cu_dir):
     directory, target = cu_dir("7")
     mounter.set_mounts(target)

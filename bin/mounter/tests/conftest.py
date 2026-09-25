@@ -80,6 +80,12 @@ def mounter(tmp_path, monkeypatch):
     # update the fake /proc/mounts, so the mount-table logic is exercised for real.
     module.runs = []
     module.umount_succeeds = True
+    # clean_cu_dir asks the API server whether a pod for the cuid still exists. There is no
+    # API server here, so model the answer: False means "gone", which is the precondition
+    # every reaping test is about. Set True (still there) or None (unreachable) to exercise
+    # the fail-safe paths.
+    module.pod_exists = False
+    module.cu_pod_exists = lambda cuid: module.pod_exists
     module.geesefs_returncode = 0
     # Set False to model a GeeseFS that exits 0 without the mount ever appearing.
     module.geesefs_mounts = True

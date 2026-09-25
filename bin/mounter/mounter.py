@@ -45,6 +45,7 @@ import ssl
 import subprocess
 import threading
 import time
+import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
@@ -451,6 +452,33 @@ def _list_cu_pods():
     return live, pods.get("metadata", {}).get("resourceVersion")
 
 
+def cu_pod_exists(cuid):
+    """True if a CU pod for `cuid` exists right now, False if it does not, None if unknown.
+
+    The watch tells us a pod was deleted, not whether one exists now. A unit that is
+    restarted, rescheduled or evicted keeps its cuid, so the DELETED event for the old pod
+    can arrive after its replacement is already running and bind-mounted to this directory.
+    Reaping on the event alone deletes the directory out from under that live pod, which
+    leaves its bind pointing at a deleted inode: every later mount then succeeds on the host
+    and is invisible inside the pod, permanently. So ask the API server before removing
+    anything.
+    """
+    try:
+        with _k8s_open(
+            f"/api/v1/namespaces/{POOL_NAMESPACE}/pods/{CU_POD_NAME_PREFIX}-{cuid}", timeout=10
+        ) as response:
+            response.read()
+        return True
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            return False
+        log(f"cu {cuid}: checking whether the pod exists failed: HTTP {e.code}")
+        return None
+    except Exception as e:  # noqa: BLE001
+        log(f"cu {cuid}: checking whether the pod exists failed: {e}")
+        return None
+
+
 def clean_cu_dir(cuid, quiet=False):
     """Unmount everything under a departed CU's directory and remove it.
 
@@ -462,6 +490,15 @@ def clean_cu_dir(cuid, quiet=False):
     # propagation for every CU on this node.
     if os.path.normpath(cu_dir) == os.path.normpath(MOUNT_ROOT) or not os.path.isdir(cu_dir):
         return True
+
+    # Fail safe: only a definite "no pod" permits touching the directory. A pod that exists,
+    # or an API server that cannot say, leaves it alone -- an orphan directory costs some disk
+    # until the next resync, whereas reaping a live unit's directory breaks it for good.
+    if cu_pod_exists(cuid) is not False:
+        if not quiet:
+            log(f"cu {cuid}: a pod for this unit exists (or could not be checked); leaving {cu_dir}")
+        return False
+
     if not quiet:
         log(f"cu {cuid} pod is gone; unmounting {cu_dir}")
 
