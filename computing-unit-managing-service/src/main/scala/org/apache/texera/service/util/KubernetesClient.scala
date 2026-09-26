@@ -145,7 +145,15 @@ class KubernetesClient(
     val flatKey = KubernetesConfig.gpuResourceKey
     val modelKeys = KubernetesConfig.gpuModelResourceKeys
 
-    val nodes = client.nodes().list().getItems.asScala
+    // A cordoned node takes no new pods, so its free GPUs cannot be offered.
+    val nodes = client
+      .nodes()
+      .list()
+      .getItems
+      .asScala
+      .filterNot { node =>
+        Option(node.getSpec).flatMap(spec => Option(spec.getUnschedulable)).exists(_.booleanValue)
+      }
 
     val runningPods = client
       .pods()
