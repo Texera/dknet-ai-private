@@ -50,6 +50,11 @@
   grid-column: span 2;
 }
 
+.gpu-unavailable-warning {
+  grid-column: span 2;
+  font-size: 0.9em;
+}
+
 .unit-name-input {
   width: 100%;
 }

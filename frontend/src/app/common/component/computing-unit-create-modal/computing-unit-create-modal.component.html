@@ -135,6 +135,16 @@
           </nz-select>
         </div>
 
+        <div
+          *ngIf="showNoGpuAvailable()"
+          class="gpu-unavailable-warning">
+          <nz-alert
+            nzType="warning"
+            nzMessage="No GPU is currently available. The computing unit will wait until one frees up."
+            nzShowIcon>
+          </nz-alert>
+        </div>
+
         <!-- Advanced settings: progressive disclosure for the power-user knobs -->
         <div class="advanced-settings">
           <button

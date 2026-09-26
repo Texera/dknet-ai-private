@@ -25,7 +25,7 @@ import { CuImage, CuImageService } from "../../../dashboard/service/admin/cu-ima
 import { HttpClientTestingModule } from "@angular/common/http/testing";
 import { NzModalService } from "ng-zorro-antd/modal";
 import { NoopAnimationsModule } from "@angular/platform-browser/animations";
-import { of, throwError } from "rxjs";
+import { of, Subject, throwError } from "rxjs";
 import { HttpErrorResponse } from "@angular/common/http";
 import type { Mocked } from "vitest";
 import { ComputingUnitCreateModalComponent } from "./computing-unit-create-modal.component";
@@ -68,6 +68,7 @@ describe("ComputingUnitCreateModalComponent", () => {
     mockComputingUnitService = {
       getComputingUnitTypes: vi.fn(),
       getComputingUnitLimitOptions: vi.fn(),
+      getAvailableGpuModels: vi.fn(),
       createKubernetesBasedComputingUnit: vi.fn(),
       createLocalComputingUnit: vi.fn(),
     } as unknown as Mocked<WorkflowComputingUnitManagingService>;
@@ -75,6 +76,7 @@ describe("ComputingUnitCreateModalComponent", () => {
     mockComputingUnitService.getComputingUnitLimitOptions.mockReturnValue(
       of({ cpuLimitOptions: [], memoryLimitOptions: [], gpuLimitOptions: [] })
     );
+    mockComputingUnitService.getAvailableGpuModels.mockReturnValue(of(["Any"]));
     mockComputingUnitService.createKubernetesBasedComputingUnit.mockReturnValue(of(createdUnit));
     mockComputingUnitService.createLocalComputingUnit.mockReturnValue(of(createdUnit));
 
@@ -470,6 +472,54 @@ describe("ComputingUnitCreateModalComponent", () => {
     expect(component.showGpuSelection()).toBe(true);
     component.gpuOptions = ["0"];
     expect(component.showGpuSelection()).toBe(false);
+  });
+
+  it("shows the GPU model picker even when only one model is free", () => {
+    mockComputingUnitService.getAvailableGpuModels.mockReturnValue(of(["H200"]));
+    fixture.detectChanges();
+
+    component.onGpuCountChange("1");
+
+    expect(mockComputingUnitService.getAvailableGpuModels).toHaveBeenCalledWith(1);
+    expect(component.selectedGpuModel).toBe("H200");
+    expect(component.showGpuModelSelection()).toBe(true);
+    expect(component.showNoGpuAvailable()).toBe(false);
+  });
+
+  it("hides the GPU model picker when the only option is Any", () => {
+    fixture.detectChanges();
+
+    component.onGpuCountChange("1");
+
+    expect(component.selectedGpuModel).toBe("Any");
+    expect(component.showGpuModelSelection()).toBe(false);
+    expect(component.showNoGpuAvailable()).toBe(false);
+  });
+
+  it("warns that no GPU is available when no model is free", () => {
+    mockComputingUnitService.getAvailableGpuModels.mockReturnValue(of([]));
+    fixture.detectChanges();
+
+    component.onGpuCountChange("1");
+
+    expect(component.showGpuModelSelection()).toBe(false);
+    expect(component.showNoGpuAvailable()).toBe(true);
+    expect(component.selectedGpuModel).toBe("Any");
+  });
+
+  it("does not warn about GPU availability while the models are loading or no GPU is requested", () => {
+    const pending = new Subject<string[]>();
+    mockComputingUnitService.getAvailableGpuModels.mockReturnValue(pending.asObservable());
+    fixture.detectChanges();
+
+    component.onGpuCountChange("1");
+    expect(component.showNoGpuAvailable()).toBe(false);
+
+    pending.next([]);
+    expect(component.showNoGpuAvailable()).toBe(true);
+
+    component.onGpuCountChange("0");
+    expect(component.showNoGpuAvailable()).toBe(false);
   });
 
   it("snaps the JVM memory slider to the nearest valid step", () => {

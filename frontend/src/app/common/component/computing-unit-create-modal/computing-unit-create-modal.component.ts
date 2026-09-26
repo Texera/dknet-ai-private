@@ -139,6 +139,7 @@ export class ComputingUnitCreateModalComponent implements OnInit, OnChanges {
   memoryOptions: string[] = [];
   gpuOptions: string[] = []; // Add GPU options array
   gpuModelOptions: string[] = [];
+  gpuModelsLoading = false;
 
   constructor(
     private computingUnitService: WorkflowComputingUnitManagingService,
@@ -277,30 +278,41 @@ export class ComputingUnitCreateModalComponent implements OnInit, OnChanges {
     return this.gpuOptions.length > 1 || (this.gpuOptions.length === 1 && this.gpuOptions[0] !== "0");
   }
 
-  // A GPU model can only be picked once at least one GPU is requested, and only
-  // when the cluster actually offers more than one model.
+  // A GPU model can only be picked once at least one GPU is requested. It is shown even when
+  // only one model is free, so the user sees which card the unit will get; "Any" alone means
+  // the deployment does not pin models, so there is nothing to choose.
   showGpuModelSelection(): boolean {
-    return this.selectedGpu !== "0" && this.gpuModelOptions.length > 1;
+    return this.selectedGpu !== "0" && this.gpuModelOptions.some(model => model !== "Any");
+  }
+
+  // The backend lists only models with enough free GPUs, so an empty answer means the unit
+  // would wait until a GPU frees up.
+  showNoGpuAvailable(): boolean {
+    return this.selectedGpu !== "0" && !this.gpuModelsLoading && this.gpuModelOptions.length === 0;
   }
 
   onGpuCountChange(newCount: string): void {
     this.selectedGpu = newCount;
     this.selectedGpuModel = "Any";
     this.gpuModelOptions = [];
+    this.gpuModelsLoading = false;
 
     if (newCount === "0") {
       return;
     }
 
+    this.gpuModelsLoading = true;
     this.computingUnitService
       .getAvailableGpuModels(+newCount)
       .pipe(untilDestroyed(this))
       .subscribe({
         next: models => {
+          this.gpuModelsLoading = false;
           this.gpuModelOptions = models;
           this.selectedGpuModel = models[0] ?? "Any";
         },
         error: () => {
+          this.gpuModelsLoading = false;
           this.gpuModelOptions = ["Any"];
           this.selectedGpuModel = "Any";
         },
