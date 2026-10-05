@@ -221,6 +221,8 @@ export class WorkflowFormComponent implements OnInit, OnDestroy {
   /** Chart height per result (0 compact / 1 default / 2 tall). Per operator so one does not resize
    *  the others, and in memory only -- a viewing preference, not part of the workflow. */
   private zoomByResult = new Map<string, number>();
+  /** The result whose card is full screen, if any. */
+  private fullScreenResult?: string;
   /** Bumped when a result changes, used as the chart's *ngFor identity so the frame is rebuilt, not
    *  reused: the chart reads its content once at creation, so a stale frame showed "undefined". */
   private resultVersion = new Map<string, number>();
@@ -1221,6 +1223,35 @@ export class WorkflowFormComponent implements OnInit, OnDestroy {
     this.zoomByResult.set(operatorID, next);
     // Let the new card height land, then have the chart redraw into it -- growing the frame alone
     // leaves the picture at its old size until something asks it to re-measure.
+    this.cdr.detectChanges();
+    this.later(() => this.fitVisualisations(), 60);
+  }
+
+  public isFullScreen(operatorID: string): boolean {
+    return this.fullScreenResult === operatorID;
+  }
+
+  /** Shows a result card on the whole display, or brings it back. The card goes full screen rather
+   *  than its iframe: the iframe would need an allow="fullscreen" it does not have, and the card
+   *  keeps its head, so the reader can still zoom and find the way back. */
+  public toggleFullScreen(card: HTMLElement): void {
+    if (document.fullscreenElement === card) {
+      void document.exitFullscreen();
+      return;
+    }
+    // A browser can refuse (a permissions policy, or no user gesture); the card then just stays.
+    card.requestFullscreen().catch(() => {});
+  }
+
+  /** Esc and the browser's own controls leave full screen too, so the state follows the document's
+   *  event rather than our button. Either way the picture has a new size to fit. */
+  @HostListener("document:fullscreenchange")
+  public onFullScreenChange(): void {
+    const element = document.fullscreenElement;
+    this.fullScreenResult =
+      element instanceof HTMLElement && this.host.nativeElement.contains(element)
+        ? element.dataset.resultId
+        : undefined;
     this.cdr.detectChanges();
     this.later(() => this.fitVisualisations(), 60);
   }

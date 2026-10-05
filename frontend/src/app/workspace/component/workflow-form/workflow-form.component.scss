@@ -712,6 +712,20 @@ $shell: #fafafa;
   margin-bottom: 14px;
   overflow: hidden;
 
+  /* Full screen, the body takes all the height the head leaves, instead of the card's fixed one. */
+  &:fullscreen {
+    display: flex;
+    flex-direction: column;
+    border: none;
+    border-radius: 0;
+
+    .result-body {
+      flex: 1;
+      height: auto;
+      min-height: 0;
+    }
+  }
+
   .result-head {
     display: flex;
     align-items: center;
