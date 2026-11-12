@@ -38,10 +38,15 @@ import org.apache.texera.common.config.EnvironmentalVariable
   */
 object UserTokenProvider {
 
-  private val fromEnvironment: () => Option[String] =
+  private val podEnvironment: () => Option[String] =
     () => sys.env.get(EnvironmentalVariable.ENV_USER_JWT_TOKEN)
 
-  @volatile private var supplier: () => Option[String] = fromEnvironment
+  private val noRun: () => Option[String] = () => None
+
+  /** Where the pod's own token is read from. Replaceable so tests need not set the real variable. */
+  @volatile private[texera] var environment: () => Option[String] = podEnvironment
+
+  @volatile private var supplier: () => Option[String] = noRun
 
   /**
     * Register where the token comes from. Called once at start-up by the process that knows who
@@ -50,19 +55,28 @@ object UserTokenProvider {
     */
   def setSupplier(newSupplier: () => Option[String]): Unit = supplier = newSupplier
 
-  /** Restores the pod-environment default. For tests. */
-  private[texera] def reset(): Unit = supplier = fromEnvironment
+  /** Restores the defaults: no registered run, and the real pod environment. For tests. */
+  private[texera] def reset(): Unit = {
+    supplier = noRun
+    environment = podEnvironment
+  }
 
   /**
     * The token to authenticate the current read with, trimmed; empty when there is none, which
     * readers take as "no user to act for" and fall back to direct storage access.
+    *
+    * The current run's identity wins; without one, the pod's own variable is used. The fallback
+    * lives here and not in a supplier because registering a supplier replaces the previous one:
+    * a supplier that only knows about queued runs would otherwise leave a private unit, whose
+    * runs are never queued, with no token at all. A public unit has no pod variable, so the
+    * fallback cannot make it read as whoever created it.
     */
   def token: String =
-    try {
-      supplier().map(_.trim).getOrElse("")
-    } catch {
-      // Never let resolving an identity break a read that would otherwise work: an empty token
-      // is a defined state here, and the caller degrades accordingly.
-      case _: Throwable => ""
-    }
+    nonBlank(supplier).orElse(nonBlank(environment)).getOrElse("")
+
+  // Never let resolving an identity break a read that would otherwise work: a source that throws
+  // counts as having no token, and the caller degrades accordingly.
+  private def nonBlank(source: () => Option[String]): Option[String] =
+    try source().map(_.trim).filter(_.nonEmpty)
+    catch { case _: Throwable => None }
 }

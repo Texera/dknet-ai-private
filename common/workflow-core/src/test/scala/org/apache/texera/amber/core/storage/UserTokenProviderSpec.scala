@@ -25,6 +25,9 @@ import org.scalatest.matchers.should.Matchers
 
 class UserTokenProviderSpec extends AnyFlatSpec with Matchers with BeforeAndAfterEach {
 
+  // No pod variable unless a test sets one, so results do not depend on the machine running them.
+  override def beforeEach(): Unit = UserTokenProvider.environment = () => None
+
   override def afterEach(): Unit = UserTokenProvider.reset()
 
   "UserTokenProvider" should "return what the registered supplier gives" in {
@@ -48,8 +51,8 @@ class UserTokenProviderSpec extends AnyFlatSpec with Matchers with BeforeAndAfte
     UserTokenProvider.token shouldBe "padded-jwt"
   }
 
-  // No run under way on a public unit: the caller sees an empty token and degrades, rather than
-  // reading as whoever happens to be in the pod environment.
+  // No run under way on a public unit, which has no pod variable: the caller sees an empty token
+  // and degrades.
   it should "be empty when the supplier has no user" in {
     UserTokenProvider.setSupplier(() => None)
     UserTokenProvider.token shouldBe ""
@@ -61,10 +64,44 @@ class UserTokenProviderSpec extends AnyFlatSpec with Matchers with BeforeAndAfte
     UserTokenProvider.token shouldBe ""
   }
 
-  it should "fall back to the pod environment before a supplier is registered" in {
-    // The default supplier reads USER_JWT_TOKEN, which this test JVM does not set; the point is
-    // that it resolves to the absent-token state rather than failing.
-    UserTokenProvider.reset()
-    UserTokenProvider.token shouldBe sys.env.getOrElse("USER_JWT_TOKEN", "").trim
+  it should "use the pod's token when no supplier is registered" in {
+    UserTokenProvider.environment = () => Some("pod-jwt")
+    UserTokenProvider.token shouldBe "pod-jwt"
+  }
+
+  // A private unit: the web layer registers a supplier, but it only knows about queued runs, and a
+  // private unit's runs are never queued. Its reads must still authenticate as the unit's owner.
+  it should "fall back to the pod's token when the supplier has no user" in {
+    UserTokenProvider.environment = () => Some("owner-jwt")
+    UserTokenProvider.setSupplier(() => None)
+    UserTokenProvider.token shouldBe "owner-jwt"
+  }
+
+  it should "prefer the current run's token over the pod's" in {
+    UserTokenProvider.environment = () => Some("owner-jwt")
+    UserTokenProvider.setSupplier(() => Some("run-jwt"))
+    UserTokenProvider.token shouldBe "run-jwt"
+  }
+
+  it should "fall back to the pod's token when the supplier gives a blank one" in {
+    UserTokenProvider.environment = () => Some("owner-jwt")
+    UserTokenProvider.setSupplier(() => Some("   "))
+    UserTokenProvider.token shouldBe "owner-jwt"
+  }
+
+  it should "fall back to the pod's token when the supplier throws" in {
+    UserTokenProvider.environment = () => Some("owner-jwt")
+    UserTokenProvider.setSupplier(() => throw new RuntimeException("no session"))
+    UserTokenProvider.token shouldBe "owner-jwt"
+  }
+
+  it should "trim the pod's token" in {
+    UserTokenProvider.environment = () => Some(" owner-jwt\n")
+    UserTokenProvider.token shouldBe "owner-jwt"
+  }
+
+  it should "be empty when the pod's variable cannot be read" in {
+    UserTokenProvider.environment = () => throw new SecurityException("no env access")
+    UserTokenProvider.token shouldBe ""
   }
 }
